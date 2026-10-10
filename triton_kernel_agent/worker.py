@@ -30,6 +30,8 @@ from typing import Any
 from triton_kernel_agent.platform_config import get_platform
 from triton_kernel_agent.worker_util import format_test_code_for_llm
 from utils.providers import get_model_provider
+from utils.providers.llm_call import call_llm
+from utils.llm_budget import CODE_GEN_MAX_TOKENS
 
 from .prompt_manager import PromptManager
 from .worker_util import _run_test_multiprocess
@@ -383,7 +385,9 @@ class VerificationWorker:
         if self.high_reasoning_effort:
             kwargs["high_reasoning_effort"] = True
 
-        response = self.provider.get_response(self.openai_model, messages, **kwargs)
+        response = call_llm(
+            self.provider, self.openai_model, messages, log=self.logger, **kwargs
+        )
         return response.content
 
     def _refine_kernel(
@@ -428,7 +432,7 @@ class VerificationWorker:
 
                 # Call LLM API
                 messages = [{"role": "user", "content": prompt}]
-                response_text = self._call_llm(messages, max_tokens=20000)
+                response_text = self._call_llm(messages, max_tokens=CODE_GEN_MAX_TOKENS)
 
                 # Extract refined kernel from response
                 refined_kernel = self._extract_code_from_response(
@@ -687,7 +691,7 @@ class VerificationWorker:
         kernel_code: str,
         test_code: list[str],
         problem_description: str,
-        max_refine_attempts: int = 3,
+        max_refine_attempts: int = 5,    #编译、正确性验证失败后重复的次数
     ) -> tuple[bool, str, str]:
         """
         Verify kernel correctness with refinement attempts.

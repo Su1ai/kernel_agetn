@@ -288,6 +288,29 @@ def _prepare_kernel(
     """
     kernel_function = load_kernel_function(kernel_file)
 
+    # Unified contract: kernel_function(*inputs, model=None). When the signature
+    # exposes a `model` parameter, bind the problem Model once and forward it,
+    # eliminating name-based weight extraction for composed kernels.
+    try:
+        _sig = inspect.signature(kernel_function)
+    except Exception:
+        _sig = None
+    if _sig is not None and "model" in _sig.parameters and Model is not None:
+        model = baseline_model
+        if model is None:
+            model = (
+                Model(*init_inputs).to(device=device, dtype=dtype)
+                if init_inputs
+                else Model().to(device=device, dtype=dtype)
+            )
+        if model is not None:
+            model.eval()
+
+        def kernel_with_model(*args, **kwargs):
+            return kernel_function(*args, model=model, **kwargs)
+
+        return kernel_with_model, []
+
     # Check if kernel expects model-derived parameters:
     # - 'weight' / 'w' for Conv, Linear, Norm layers
     # - pooling scalars (kernel_size, stride, padding, dilation) for Pool layers

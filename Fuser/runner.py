@@ -203,10 +203,12 @@ def run_candidate(
     isolated: bool,
     deny_network: bool,
     cancel_event: "threading.Event" | None = None,
+    problem_path: Path | None = None,
 ) -> RunResult:
     """
     Execute a candidate program in a fresh run directory under run_root.
     - Copies artifacts_code_path to run_dir/candidate_main.py
+    - If problem_path is given, also copies it to run_dir/problem.py
     - Runs [sys.executable, '-u', 'candidate_main.py'] with optional -I (isolated)
     - If deny_network, injects sitecustomize.py to block sockets and do NOT use -I
     - Captures stdout/stderr to files; kills on timeout or cancel_event
@@ -228,6 +230,12 @@ def run_candidate(
     if not stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode):
         raise ValueError("artifacts_code_path must be a regular file (no symlink)")
     shutil.copy2(artifacts_code_path, code_dst)
+
+    if problem_path is not None:           #将problem移入compose_out文件下
+        # The composed kernel imports the sibling `problem` module for its
+        # self-test instead of embedding a copy of the torch.nn reference model,
+        # so the problem file has to sit next to the candidate.
+        shutil.copy2(problem_path, run_dir / "problem.py")
 
     if deny_network:
         _write_sitecustomize_block_network(run_dir)

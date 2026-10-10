@@ -18,6 +18,26 @@ from pathlib import Path
 
 from triton_kernel_agent.platform_config import get_platform, PlatformConfig
 
+
+def format_sol_metrics(
+    combined: float | None, compute: float | None, memory: float | None
+) -> str:
+    """Render NCU SOL percentages, or an explicit "unavailable" marker.
+
+    A missing measurement must never be rendered as ``0.0%``: the optimizer's
+    LLM cannot tell a real reading of zero utilisation apart from "NCU never
+    produced metrics", and has previously reasoned about such phantom numbers.
+    """
+    if combined is None and compute is None and memory is None:
+        return "N/A (NCU metrics unavailable)"
+
+    def pct(value: float | None) -> str:
+        return "N/A" if value is None else f"{value:.1f}%"
+
+    return (
+        f"Combined: {pct(combined)}, Compute: {pct(compute)}, Memory: {pct(memory)}"
+    )
+
 try:
     from jinja2 import Environment, FileSystemLoader, Template
 
@@ -320,7 +340,9 @@ class PromptManager:
             return self._inline_reflexion_prompt(attempt)
 
         template = self.templates["reflexion_prompt"]
-        return template.render(attempt=attempt)
+        # ``format_sol_metrics`` renders an explicit "unavailable" marker so the
+        # model never mistakes a missing NCU measurement for 0% utilization.
+        return template.render(attempt=attempt, format_sol_metrics=format_sol_metrics)
 
     def _inline_reflexion_prompt(self, attempt) -> str:
         """Generate inline reflexion prompt when template is not available."""
@@ -342,7 +364,7 @@ class PromptManager:
 ## Results
 - Performance: {attempt.time_before_ms:.4f}ms → {attempt.time_after_ms:.4f}ms
 - Improvement: {attempt.improvement_pct:+.1f}%
-- NCU SOL: Compute {attempt.compute_sol_pct:.1f}%, Memory {attempt.memory_sol_pct:.1f}%
+- NCU SOL (% of Peak): {format_sol_metrics(attempt.combined_sol_pct, attempt.compute_sol_pct, attempt.memory_sol_pct)}
 - Passed: {attempt.passed_verification}
 
 Respond with JSON containing:

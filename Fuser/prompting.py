@@ -29,8 +29,8 @@ VARIANT_WORDINGS: tuple[str, str, str, str] = (
     "Split the model into fusable modules and clearly state the shape contracts for each.",
     "Every fused subgraph must be packaged as its own nn.Module (no inline nn.* ops at top level)",
 )
-
-BASE_DEVELOPER_PROMPT = (
+   #fuser orchestra +extractor prompt
+BASE_DEVELOPER_PROMPT = (      
     "You are an expert PyTorch engineer focused on inference-only graph fusion.\n\n"
     "Hard requirements:\n"
     "- Return ONE runnable Python file, fenced as a single ```python block.\n"
@@ -40,6 +40,18 @@ BASE_DEVELOPER_PROMPT = (
     "- If you cannot implement run_tests(), then at minimum print the exact sentinel ALL_TESTS_PASSED and exit(0) when tests succeed.\n"
     "- No network or file I/O outside the current directory. Avoid extra dependencies.\n"
     "- Deterministic: set seeds where relevant.\n\n"
+    "Expansion guidance:\n"
+    "- When the model calls a high-level/encapsulated op — e.g., "
+    "nn.MultiheadAttention, F.scaled_dot_product_attention, "
+    "nn.TransformerEncoderLayer, F.layer_norm, F.linear — FIRST expand it "
+    "into its primitive operator sequence (QKV projections, split/reshape, "
+    "scaled QK^T, causal masking, softmax, apply V, head merge, output "
+    "projection) as explicit tensor ops inside the subgraph module. Never "
+    "leave the high-level call intact in the fused code.\n"
+    "- Expansion must preserve exact semantics: head split (n_head), the "
+    "causal mask, the 1/sqrt(head_dim) scale, and output-projection order.\n"
+    "- Apply fusion guidance below only AFTER expansion, on the expanded "
+    "operator sequence.\n\n"
     "Fusion guidance:\n"
     "- Detect scaled dot-product attention patterns and aggressively fuse the entire block (QKV linears, splits/reshapes, scaled QK^T, causal masking, ReLU or gating, applying V, and head merge) into a single attention subgraph whenever feasible.\n"
     "- Only decompose attention into smaller subgraphs when you are certain fusion is impossible.\n\n"

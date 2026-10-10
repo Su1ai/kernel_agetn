@@ -48,6 +48,8 @@ from .event_adapter import EventAdapter
 from triton_kernel_agent.platform_config import get_platform_choices
 
 from utils.providers import get_model_provider
+from utils.providers.llm_call import call_llm
+from utils.llm_budget import EXTRACT_MAX_TOKENS
 
 
 def _load_code_from_tar(artifact_path: Path) -> str:
@@ -214,6 +216,7 @@ def extract_subgraphs_to_json(
     llm_timeout_s: int,
     run_timeout_s: int,
     target_platform: str = "cuda",
+    out_root: Path | None = None,
 ) -> tuple[Path, Path]:
     """Run Fuser to produce fused code, then use LLM to emit subgraphs JSON.
 
@@ -235,7 +238,9 @@ def extract_subgraphs_to_json(
         target_platform=target_platform,
     )
     run_id = new_run_id()
-    base_dir = Path.cwd() / ".fuse"
+    # Respect an explicit out_root (used by pipeline/run_pipeline); keep the
+    # legacy cwd-based ".fuse" when the caller does not specify one.
+    base_dir = out_root if out_root is not None else Path.cwd() / ".fuse"         
     base_dir.mkdir(exist_ok=True)
     dirs = make_run_dirs(base_dir, run_id)
 
@@ -245,7 +250,7 @@ def extract_subgraphs_to_json(
         workers_dir=dirs["workers"],
         orchestrator_dir=dirs["orchestrator"],
     )
-    summary = orch.run()
+    summary = orch.run()                                   #跑fuse模型，做pytrch model的融合
     if summary.winner_worker_id is None or not summary.artifact_path:
         raise SystemExit(f"No passing fused code: {summary.reason}")
 
@@ -255,7 +260,7 @@ def extract_subgraphs_to_json(
     problem_code = problem_path.read_text(encoding="utf-8")
 
     # Ask LLM for shapes JSON
-    system, user = _build_llm_prompt_for_shapes(fused_code, problem_code)
+    system, user = _build_llm_prompt_for_shapes(fused_code, problem_code) #构造子图分解prompt，
 
     """
     Temporary MUX to support Relay while we migrate to OpenAI Responses API.
@@ -263,19 +268,21 @@ def extract_subgraphs_to_json(
     Uses EventAdapter for OpenAI, otherwise Provider inferface
     """
     provider = get_model_provider(model_name)
-    if provider.name != "openai":
+    if provider.name != "openai":                    #如果供应商不是openai， 构造message提交任务，用result提取回答
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        result = provider.get_response(
+        result = call_llm(
+            provider,
             model_name,
             messages,
-            max_tokens=16000,
+            label="subgraph_extractor",
+            max_tokens=EXTRACT_MAX_TOKENS,
             text={"format": {"type": "text"}},
         )
         output_text = result.content or ""
-    else:
+    else:                                            #如果供应商是openai，调用事件适配器。
         jsonl_path = dirs["orchestrator"] / "subgraphs.stream.jsonl"
         adapter = EventAdapter(
             model=model_name,
@@ -305,8 +312,9 @@ def extract_subgraphs_to_json(
     # Merge duplicates by signature and sum counts
     grouped: dict[str, dict[str, Any]] = {}
 
-    def sig_of(it: dict[str, Any]) -> str:
-        # Build a robust signature from ops + shapes + weights
+    def sig_of(it: dict[str, Any]) -> str:                 #子图去重，如一个transformer有多个block，只需优化其中一个
+        # 核心思想：将子图的算子、张量形状、数据类型、权重结构等关键信息归一化后，
+        # 序列化为字符串作为签名。签名相同即判定为同构子图
         ops = it.get("ops") or []
         # normalize ops by sorting keys of each op dict
         ops_norm = []
@@ -344,14 +352,14 @@ def extract_subgraphs_to_json(
         return json.dumps(sig_obj, sort_keys=True)
 
     for it in data:
-        s = sig_of(it)
-        if s not in grouped:
-            # ensure id exists; fallback to hash fragment
-            if not it.get("id"):
+        s = sig_of(it)     #子图去重
+        if s not in grouped:   #如果子图第一次出现
+            if not it.get("id"):   #当子图没有id字段时，主动生成，生成规则是s的前32位比特（即一个int型数字）
                 it["id"] = f"sg_{hash(s) & 0xFFFFFFFF:08x}"
             # normalize count
             c = it.get("count")
-            try:
+            try: 
+            #如果c不为none，则把c转化为int，如果位none，则c转化为1
                 count_val = int(c) if c is not None else 1
             except Exception:
                 count_val = 1

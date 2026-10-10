@@ -26,6 +26,8 @@ from dotenv import load_dotenv
 from .manager import WorkerManager
 from .prompt_manager import PromptManager
 from utils.providers import BaseProvider, get_model_provider
+from utils.providers.llm_call import call_llm
+from utils.llm_budget import CODE_GEN_MAX_TOKENS
 from triton_kernel_agent.platform_config import PlatformConfig, get_platform
 from triton_kernel_agent.worker_util import format_test_code_for_llm
 
@@ -208,7 +210,9 @@ class TritonKernelAgent:
         if self.high_reasoning_effort:
             kwargs["high_reasoning_effort"] = True
 
-        response = self.provider.get_response(self.model_name, messages, **kwargs)
+        response = call_llm(
+            self.provider, self.model_name, messages, log=self.logger, **kwargs
+        )
         return response.content
 
     def _generate_test(
@@ -245,7 +249,7 @@ class TritonKernelAgent:
 
                 # Call LLM API
                 messages = [{"role": "user", "content": prompt}]
-                response_text = self._call_llm(messages, max_tokens=24000)
+                response_text = self._call_llm(messages, max_tokens=CODE_GEN_MAX_TOKENS)
                 self.logger.info("Raw test generation response:\n%s", response_text)
 
                 # Extract test code from response
@@ -369,7 +373,7 @@ if __name__ == "__main__":
                 messages = [{"role": "user", "content": prompt}]
 
                 # Use provider's multiple response capability
-                max_completion_tokens = 20000
+                max_completion_tokens = CODE_GEN_MAX_TOKENS
 
                 if self.provider.supports_multiple_completions():
                     # Provider supports native multiple completions

@@ -203,6 +203,17 @@ class NoOpBottleneckAnalyzer(BottleneckAnalyzerBase):
         logger.info("[noop] Skipping bottleneck analysis — returning []")
         return []
 
+    def analyze_source_only(
+        self,
+        kernel_code: str,
+        problem_code: str,
+        round_num: int = 0,
+        baseline_time_ms: float | None = None,
+        pytorch_baseline_ms: float | None = None,
+    ) -> list[Any]:
+        logger.info("[noop] Skipping source-only analysis — returning []")
+        return []
+
 
 class NoOpRAGPrescriber(RAGPrescriberBase):
     """Returns no RAG results."""

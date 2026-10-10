@@ -88,6 +88,7 @@ class OptimizationWorker:
         # BeamSearch parameters (passed by opt_manager)
         bottleneck_id: int | None = None,
         bottleneck_override: str | None = None,
+        allow_source_only_fallback: bool = False,
         # How many bottlenecks the analyzer should request from the LLM.
         # Strategies that fan out across multiple bottleneck ranks (e.g. beam
         # search with num_bottlenecks > 1) need the analyzer to actually
@@ -162,6 +163,7 @@ class OptimizationWorker:
         # BeamSearch parameters
         self.bottleneck_id = bottleneck_id
         self.bottleneck_override = bottleneck_override
+        self.allow_source_only_fallback = allow_source_only_fallback
         self.num_bottlenecks_to_request = max(1, int(num_bottlenecks_to_request))
 
         # Shared history from beam search manager
@@ -424,6 +426,7 @@ class OptimizationWorker:
             sol_improvement_threshold=self.sol_improvement_threshold,
             bottleneck_id=self.bottleneck_id,
             bottleneck_override=self.bottleneck_override,
+            allow_source_only_fallback=self.allow_source_only_fallback,
             rag_prescriber=self.rag_prescriber,
             # Shared history from beam search manager
             prior_history=self.prior_history,

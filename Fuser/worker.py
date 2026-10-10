@@ -27,6 +27,8 @@ from .logging_utils import setup_file_logger
 from .dedup import register_digest
 
 from utils.providers import get_model_provider
+from utils.providers.llm_call import call_llm
+from utils.llm_budget import EXTRACT_MAX_TOKENS
 
 
 @dataclass
@@ -133,8 +135,14 @@ class Worker:
                     {"role": "user", "content": rp.user},
                 ]
                 try:
-                    response = provider.get_response(
-                        self.cfg.model, messages, max_tokens=16000, **rp.extras
+                    response = call_llm(
+                        provider,
+                        self.cfg.model,
+                        messages,
+                        log=self.logger,
+                        label="orchestrator",
+                        max_tokens=EXTRACT_MAX_TOKENS,
+                        **rp.extras,
                     )
                     result = {
                         "output_text": response.content or "",

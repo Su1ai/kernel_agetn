@@ -86,6 +86,7 @@ def run_pipeline(
         llm_timeout_s=llm_timeout_s,
         run_timeout_s=run_timeout_s,
         target_platform=target_platform,
+        out_root=out_root,                  #新添参数用于保存fuser结果
     )
 
     # Step 2: dispatch to KernelAgent

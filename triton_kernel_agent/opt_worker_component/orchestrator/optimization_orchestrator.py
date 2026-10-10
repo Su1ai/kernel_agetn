@@ -27,10 +27,12 @@ from typing import Any
 
 from kernel_perf_agent.kernel_opt.diagnose_prompt.judger_prompt import BottleneckResult
 from kernel_perf_agent.kernel_opt.roofline.ncu_roofline import RooflineAnalyzer
-from triton_kernel_agent.prompt_manager import PromptManager
+from triton_kernel_agent.prompt_manager import PromptManager, format_sol_metrics
 from triton_kernel_agent.worker import VerificationWorker
 from triton_kernel_agent.worker_util import _write_kernel_file
 from utils.providers.base import BaseProvider
+from utils.providers.llm_call import call_llm
+from utils.llm_budget import CODE_GEN_MAX_TOKENS, REFLEXION_MAX_TOKENS
 
 
 def extract_triton_config(kernel_code: str) -> dict[str, Any]:
@@ -66,6 +68,22 @@ def extract_triton_config(kernel_code: str) -> dict[str, Any]:
     return config
 
 
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Return the first JSON object embedded in ``text``, else ``None``.
+
+    A truncated response (reasoning budget exhausted before the object closed)
+    yields no match and is therefore reported as unparseable rather than being
+    silently turned into a fallback reflexion.
+    """
+    match = re.search(r"\{[\s\S]*\}", text or "")
+    if not match:
+        return None
+    try:
+        return json.loads(match.group())
+    except json.JSONDecodeError:
+        return None
+
+
 @dataclass
 class OptimizationAttempt:
     """Records a single optimization attempt with its results."""
@@ -80,9 +98,11 @@ class OptimizationAttempt:
     time_after_ms: float = 0.0
     improvement_pct: float = 0.0
     is_improvement: bool = False
-    compute_sol_pct: float = 0.0
-    memory_sol_pct: float = 0.0
-    combined_sol_pct: float = 0.0
+    # ``None`` means "not measured" (NCU unavailable).  A 0.0 default would be
+    # indistinguishable from a genuine reading of zero utilisation.
+    compute_sol_pct: float | None = None
+    memory_sol_pct: float | None = None
+    combined_sol_pct: float | None = None
     passed_verification: bool = False
     error_message: str = ""
 
@@ -111,8 +131,10 @@ class OptimizationAttempt:
                 f"**Performance**: {self.time_before_ms:.4f}ms → {self.time_after_ms:.4f}ms ({perf_change})"
             )
             lines.append(
-                f"**NCU SOL (% of Peak)**: Combined: {self.combined_sol_pct:.1f}%, "
-                f"Compute: {self.compute_sol_pct:.1f}%, Memory: {self.memory_sol_pct:.1f}%"
+                "**NCU SOL (% of Peak)**: "
+                + format_sol_metrics(
+                    self.combined_sol_pct, self.compute_sol_pct, self.memory_sol_pct
+                )
             )
         else:
             lines.append(
@@ -225,6 +247,7 @@ class OptimizationOrchestrator:
         sol_improvement_threshold: float = 5.0,
         bottleneck_id: int | None = None,
         bottleneck_override: str | None = None,
+        allow_source_only_fallback: bool = False,
         # Shared history from beam search manager
         prior_history: list[dict] | None = None,
         prior_reflexions: list[dict] | None = None,
@@ -288,6 +311,10 @@ class OptimizationOrchestrator:
 
         # Optional RAG prescriber
         self.rag_prescriber = rag_prescriber
+
+        # When NCU profiling is unavailable/fails, allow falling back to
+        # source-only LLM bottleneck analysis (no fabricated hardware metrics).
+        self.allow_source_only_fallback = allow_source_only_fallback
 
         # Bottleneck selection for beam search diversity (1-indexed)
         self.bottleneck_id = bottleneck_id
@@ -407,11 +434,36 @@ class OptimizationOrchestrator:
                     f"Memory: {roofline_check.memory_sol_pct:.1f}%)"
                 )
 
-            if not bottleneck_results:
-                self.logger.warning(
-                    f"[{round_num}] No analysis available, skipping round"
-                )
-                continue
+            if not bottleneck_results:            #ncu失败时，执行source-only路径
+                if self.allow_source_only_fallback:
+                    self.logger.warning(
+                        f"[{round_num}] No NCU analysis available; "
+                        "falling back to source-only LLM analysis"
+                    )
+                    try:
+                        problem_code = problem_file.read_text(encoding="utf-8")
+                    except Exception:
+                        problem_code = ""
+                    bottleneck_results = self.bottleneck_analyzer.analyze_source_only(
+                        kernel_code=current_kernel,
+                        problem_code=problem_code,
+                        round_num=round_num,
+                        baseline_time_ms=best_runtime_time,
+                        pytorch_baseline_ms=self.pytorch_baseline_time,
+                    )
+                    roofline_result = None
+                    ncu_metrics = {}
+                    if not bottleneck_results:
+                        self.logger.warning(
+                            f"[{round_num}] Source-only analysis failed, "
+                            "skipping round"
+                        )
+                        continue
+                else:
+                    self.logger.warning(
+                        f"[{round_num}] No analysis available, skipping round"
+                    )
+                    continue
 
             # Build optimization prompt using PromptManager with correct API
             # Select bottleneck based on bottleneck_id for beam search diversity
@@ -552,13 +604,15 @@ class OptimizationOrchestrator:
             any_verified = True
             current_attempt.config_changes = config_changes
 
-            # Add SOL metrics from new kernel profiling
+            # Add SOL metrics from new kernel profiling.  Everything stays None
+            # when profiling produced nothing, so downstream prompts say
+            # "unavailable" rather than reporting a fabricated 0.0%.
             if new_kernel_metrics:
                 current_attempt.compute_sol_pct = new_kernel_metrics.get(
-                    "compute_sol_pct", 0.0
+                    "compute_sol_pct"
                 )
                 current_attempt.memory_sol_pct = new_kernel_metrics.get(
-                    "memory_sol_pct", 0.0
+                    "memory_sol_pct"
                 )
                 current_attempt.combined_sol_pct = new_sol
 
@@ -907,7 +961,7 @@ class OptimizationOrchestrator:
             messages = [{"role": "user", "content": opt_prompt}]
             response_text = self.verification_worker._call_llm(
                 messages,
-                max_tokens=24576,
+                max_tokens=CODE_GEN_MAX_TOKENS,
             )
 
             # Save response
@@ -995,24 +1049,52 @@ class OptimizationOrchestrator:
             reflexion_prompt = self.prompt_manager.render_reflexion_prompt(attempt)
 
             messages = [{"role": "user", "content": reflexion_prompt}]
-            # Use provider directly with high_reasoning_effort=False
-            # (worker._call_llm would force high_reasoning=True if worker was configured that way)
-            response = self.provider.get_response(
-                self.model,
-                messages,
-                max_tokens=2048,
-            )
-            response_text = response.content
-
-            # Save reflexion response
+            # Call the provider directly so the worker's high_reasoning_effort
+            # setting is not forced on: a reflexion is a small JSON object and
+            # should not have a long thinking trace competing for its budget.
             reflexion_file = (
                 self.artifact_dir / f"round{attempt.round_num:03d}_reflexion.txt"
             )
-            with open(reflexion_file, "w") as f:
-                f.write(response_text)
 
-            # Parse JSON from response
-            reflexion_data = self._parse_reflexion_response(response_text, attempt)
+            reflexion_data: Reflexion | None = None
+            for parse_try in range(2):
+                response = call_llm(
+                    self.provider,
+                    self.model,
+                    messages,
+                    log=self.logger,
+                    label=f"reflexion round {attempt.round_num}",
+                    # The thinking trace shares the output budget; at 2048 it
+                    # routinely consumed everything and content came back empty.
+                    max_tokens=REFLEXION_MAX_TOKENS,
+                    empty_retries=1,
+                    # On an empty first response, retry with a larger budget.
+                    # ``enable_thinking`` is deliberately not used here: this
+                    # gateway ignores it (verified against the live API), so
+                    # output budget is the only lever that actually works.
+                    retry_kwargs={"max_tokens": REFLEXION_MAX_TOKENS * 2},
+                )
+                response_text = response.content or ""
+
+                # Keep the first response on disk for debugging.
+                if parse_try == 0:
+                    with open(reflexion_file, "w") as f:
+                        f.write(response_text)
+
+                if _extract_json_object(response_text) is None:
+                    self.logger.warning(
+                        f"[{attempt.round_num}] Reflexion response was not "
+                        f"parseable JSON (attempt {parse_try + 1}/2)"
+                    )
+                    continue
+
+                reflexion_data = self._parse_reflexion_response(response_text, attempt)
+                break
+
+            if reflexion_data is None:
+                return self._fallback_reflexion(
+                    attempt, reasoning="Reflexion response could not be parsed"
+                )
             return reflexion_data
 
         except Exception as e:
@@ -1045,33 +1127,26 @@ class OptimizationOrchestrator:
         self, response_text: str, attempt: OptimizationAttempt
     ) -> Reflexion:
         """Parse LLM response into Reflexion object."""
-        # Try to extract JSON from response
-        json_match = re.search(r"\{[\s\S]*\}", response_text)
-        if json_match:
-            try:
-                data = json.loads(json_match.group())
-                return Reflexion(
-                    round_num=attempt.round_num,
-                    root_cause_diagnosed=attempt.root_cause,
-                    fix_applied=attempt.recommended_fix,
-                    expected_outcome=data.get(
-                        "expected_outcome", "Improve performance"
-                    ),
-                    actual_outcome=data.get("actual_outcome", ""),
-                    performance_delta_pct=attempt.improvement_pct,
-                    was_diagnosis_correct=data.get(
-                        "was_diagnosis_correct", attempt.is_improvement
-                    ),
-                    was_fix_effective=data.get(
-                        "was_fix_effective", attempt.is_improvement
-                    ),
-                    reasoning=data.get("reasoning", ""),
-                    lessons=data.get("lessons", []),
-                    avoid_patterns=data.get("avoid_patterns", []),
-                    try_patterns=data.get("try_patterns", []),
-                )
-            except json.JSONDecodeError:
-                pass
+        data = _extract_json_object(response_text)
+        if data is not None:
+            return Reflexion(
+                round_num=attempt.round_num,
+                root_cause_diagnosed=attempt.root_cause,
+                fix_applied=attempt.recommended_fix,
+                expected_outcome=data.get("expected_outcome", "Improve performance"),
+                actual_outcome=data.get("actual_outcome", ""),
+                performance_delta_pct=attempt.improvement_pct,
+                was_diagnosis_correct=data.get(
+                    "was_diagnosis_correct", attempt.is_improvement
+                ),
+                was_fix_effective=data.get(
+                    "was_fix_effective", attempt.is_improvement
+                ),
+                reasoning=data.get("reasoning", ""),
+                lessons=data.get("lessons", []),
+                avoid_patterns=data.get("avoid_patterns", []),
+                try_patterns=data.get("try_patterns", []),
+            )
 
         # Fallback: create reflexion from attempt data
         return self._fallback_reflexion(

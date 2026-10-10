@@ -18,10 +18,26 @@ from utils.providers.model_config import ModelConfig
 from utils.providers.openai_provider import OpenAIProvider
 from utils.providers.anthropic_provider import AnthropicProvider
 from utils.providers.relay_provider import RelayProvider
+from utils.providers.deepseek_provider import DeepSeekProvider
 
 
 # Registry of all available models (external/OSS version)
 AVAILABLE_MODELS = [
+    ModelConfig(
+        name="deepseek-v4-pro",
+        provider_classes=[DeepSeekProvider],
+        description="DeepSeek V4 Pro via an OpenAI-compatible endpoint",
+    ),
+    ModelConfig(
+        name="deepseek-v4-flash",
+        provider_classes=[DeepSeekProvider],
+        description="DeepSeek V4 Flash via an OpenAI-compatible endpoint",
+    ),
+    ModelConfig(
+    name="deepseek-v4.1-flash",
+    provider_classes=[DeepSeekProvider],
+    description="DeepSeek V4.1 Flash via an OpenAI-compatible endpoint",
+    ),
     ModelConfig(
         name="o4-mini",
         provider_classes=[OpenAIProvider],

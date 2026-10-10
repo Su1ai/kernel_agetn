@@ -28,11 +28,11 @@ class OrchestratorConfig:
     max_iters: int = 10
     llm_timeout_s: int = 120
     run_timeout_s: int = 180
-    stream_mode: str = "all"  # all|winner|none
-    store_responses: bool = False
-    isolated: bool = False
-    deny_network: bool = False
-    enable_reasoning_extras: bool = True
+    stream_mode: str = "all"  # all|winner|none      #输出所有kernel。
+    store_responses: bool = False                    #是否将llm的思考、执行过程保存
+    isolated: bool = False                           #是否开启沙盒
+    deny_network: bool = False                      #开启沙盒情况下，是否允许llm访问网络
+    enable_reasoning_extras: bool = True            #是否开启llm推理、反思能力。
     target_platform: str = "cuda"
 
     def to_json(self) -> str:

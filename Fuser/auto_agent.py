@@ -63,6 +63,7 @@ from triton_kernel_agent.platform_config import (
     get_platform,
 )
 from utils.providers.models import get_model_provider, is_model_available
+from utils.providers.llm_call import call_llm
 
 
 # ------------------------
@@ -674,9 +675,11 @@ class AutoKernelRouter:
         }
         if self.router_high_reasoning:
             kwargs["high_reasoning_effort"] = True
-        resp = provider.get_response(
+        resp = call_llm(
+            provider,
             self.router_model,
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            label="router",
             **kwargs,
         )
         txt = resp.content or ""

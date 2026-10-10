@@ -39,9 +39,11 @@ composition summary JSON.
 
 from __future__ import annotations
 
+import ast
 import argparse
 import json
 import os
+import re
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +63,21 @@ try:
 except Exception:
     get_model_provider = None  # type: ignore
 
+# Shared call helper: logs finish_reason / reasoning tokens and handles
+# empty-response retries.
+from utils.providers.llm_call import call_llm
+from utils.llm_budget import COMPOSE_MAX_TOKENS
+
+# Mirror the optimizer's kernel-source policy. The optimization stage rejects any
+# kernel file mentioning torch.nn constructs, so catch that at generation time
+# instead of failing later with an opaque initial-verification error.
+try:
+    from triton_kernel_agent.worker import (
+        DISALLOWED_TORCH_PATTERNS as _DISALLOWED_TORCH_PATTERNS,
+    )
+except Exception:  # pragma: no cover - optional dependency
+    _DISALLOWED_TORCH_PATTERNS = []
+
 # Reuse extractor to capture clean python code blocks
 from .code_extractor import extract_single_python_file
 
@@ -73,6 +90,62 @@ class KernelItem:
     subgraph_id: str
     kernel_path: Path
     code: str
+
+
+def _validate_kernel_function_contract(code: str) -> str | None:
+    """Validate the composed code's kernel_function follows the unified contract.
+
+    The contract is ``kernel_function(*inputs, model=None)``: primary inputs are
+    accepted positionally via ``*inputs``, and all weights/biases/buffers are
+    read from an optional ``model`` keyword argument. Returns ``None`` when
+    compliant, otherwise a short reason string describing the violation.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        return f"generated code has a syntax error: {exc}"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "kernel_function":
+            args = node.args
+            param_names = [a.arg for a in (list(args.args) + list(args.kwonlyargs))]
+            if "model" not in param_names:
+                return "kernel_function is missing the required `model` parameter"
+            if args.vararg is None:
+                return "kernel_function must accept positional inputs via `*inputs`"
+            return None
+
+    return "no `kernel_function` definition found in generated code"
+
+_TRIPLE_DOUBLE = '"' * 3
+_TRIPLE_SINGLE = "'" * 3
+_STRIP_COMMENTS_STRINGS_RE = re.compile(
+    "("
+    + _TRIPLE_DOUBLE
+    + r"[\s\S]*?"
+    + _TRIPLE_DOUBLE
+    + "|"
+    + _TRIPLE_SINGLE
+    + r"[\s\S]*?"
+    + _TRIPLE_SINGLE
+    + "|#.*)"
+)
+
+
+def _detect_disallowed_torch_usage(code: str) -> str | None:
+    """Return a violation message if ``code`` uses PyTorch in a way the
+    optimization stage forbids (notably an embedded torch.nn reference model).
+
+    Comments and string literals are stripped first so that prose such as
+    "do not import torch.nn" cannot cause a false positive.
+    """
+    if not _DISALLOWED_TORCH_PATTERNS:
+        return None
+    sanitized = _STRIP_COMMENTS_STRINGS_RE.sub("", code)
+    for pattern, message in _DISALLOWED_TORCH_PATTERNS:
+        if pattern.search(sanitized):
+            return message
+    return None
 
 
 def _read_text(path: Path) -> str:
@@ -177,10 +250,17 @@ def _build_composition_prompt(
         - Allocate inputs, weights, intermediates, and outputs on device='{target_platform.device_string}' and keep them there throughout forward/verification.
         - CPU is acceptable only for metadata, scalars, and export serialization—avoid `.cpu()` or `.to('cpu')` on compute tensors.
         - Provide at least one @triton.jit kernel and a top-level Python wrapper
-          named kernel_function(...). This wrapper must accept the same primary
-          input tensor(s) as the model and any required weights/biases with shapes
-          implied by the problem; it should orchestrate Triton kernel(s) and
-          return the final output tensor.
+          with the EXACT signature:  kernel_function(*inputs, model=None).
+          Accept the primary input tensor(s) positionally (in Model.forward
+          order) via *inputs. Read ALL required weights, biases, and buffers
+          from the `model` argument (an instance of the problem's Model), via
+          attribute access such as model.ln_1.weight, model.attn.c_attn.weight,
+          or model.attn.bias. Do NOT list individual weight/bias tensors as
+          separate positional parameters. When the model has no learnable
+          parameters or buffers, `model` may be None and may be unused.
+        - Keep this EXACT signature stable across refinement rounds: the
+          positional input tensor(s) first, then the optional `model=None`
+          keyword parameter. Never rename, reorder, or drop `model`.
         - No PyTorch math path: kernel_function MUST compute the final outputs
           using your Triton kernels only. Do NOT implement or fall back to
           torch.nn / torch.nn.functional / torch.* ops
@@ -189,13 +269,30 @@ def _build_composition_prompt(
         - Use the data layout and dtype semantics indicated by subgraphs, defaulting
           to NCHW + float32 if unspecified. Respect stride/padding/dilation/groups,
           and exact op order.
+        - TRITON-ONLY FILE (critical): this file must contain ONLY Triton
+          kernels and plain Python helpers. Do NOT import torch.nn or
+          torch.nn.functional, do NOT subclass nn.Module, do NOT declare or
+          paste the reference Model (or any other nn.Module) into this file, and
+          do NOT call `.forward(...)`. The downstream optimizer statically
+          rejects any file containing these constructs, even when they appear
+          only in the self-test.
         - Numerical equivalence: include a self-test (test_kernel or run_tests)
-          that compares your Triton-based result to a PyTorch reference computed
-          from the original problem code below (use get_init_inputs() and
-          get_inputs() if present to instantiate the Model). The test must print
-          'PASS' on success and exit with code 0. Use allclose with rtol<=1e-3,
-          atol<=1e-3 for fp32; for fp16/bf16 allow up to 2e-2.
-        - No imports beyond torch, triton, triton.language as tl, and stdlib. No I/O.
+          that compares your Triton-based result to a PyTorch reference taken
+          from the SIBLING `problem` module (a file named problem.py is placed
+          next to yours). Inside the self-test function - not at module top
+          level - do:
+              import problem
+              device = 'cuda'
+              model = problem.Model(*problem.get_init_inputs()).to(device).eval()
+              inputs = [t.to(device) for t in problem.get_inputs()]
+          then call your wrapper as kernel_function(*inputs, model=model) and
+          compare against model(*inputs) (invoke the module directly; never call
+          `.forward(...)`). The test must print 'PASS' on success and exit with
+          code 0. Use torch.allclose with rtol<=1e-3, atol<=1e-3 for fp32; for
+          fp16/bf16 allow up to 2e-2.
+        - Allowed imports: torch, triton, triton.language as tl, the sibling
+          `problem` module, and the Python standard library. No other imports
+          and no I/O.
         - Do NOT monkey-patch PyTorch device functions or torch.cuda.is_available()
         - Do NOT manipulate TRITON_BACKENDS environment variable
         - Do NOT disable or mock XPU/CUDA drivers
@@ -231,7 +328,6 @@ def _build_composition_prompt(
     )
     return "\n".join(user_lines)
 
-
 def _build_refinement_prompt(
     problem_code: str,
     subgraphs: list[dict[str, Any]],
@@ -257,8 +353,13 @@ def _build_refinement_prompt(
         - Fix any Triton compilation/runtime errors. For scalar constants in
           elementwise ops (e.g., ReLU), do not use tl.broadcast. Use direct
           scalars like 0.0 in tl.maximum(x, 0.0).
-        - Keep function name kernel_function(...) unchanged and retain the
-          self-test that prints PASS on success and exits 0.
+        - Keep the EXACT signature kernel_function(*inputs, model=None)
+          unchanged (positional inputs first, then `model=None`), and retain
+          the self-test that prints PASS on success and exits 0.
+        - Keep the file Triton-only: no torch.nn / torch.nn.functional imports,
+          no nn.Module subclass, no copied reference Model, no `.forward(...)`
+          calls. The self-test must obtain its reference via `import problem`
+          (inside the self-test function), not by redefining the model.
         - Do NOT reintroduce any PyTorch math path in kernel_function. The final
           outputs must be computed via your Triton kernels only (no fallback to
           torch.nn / torch.nn.functional ops).
@@ -284,7 +385,6 @@ def _build_refinement_prompt(
         "Return only one fenced Python code block with the corrected implementation."
     )
     return "\n".join(lines)
-
 
 def _auto_patch_common_triton_issues(
     code: str, target_platform: PlatformConfig
@@ -404,19 +504,59 @@ def compose(
             )
 
         (attempts_dir / f"attempt_{i}.prompt.txt").write_text(prompt, encoding="utf-8")
-        response = provider.get_response(
-            model_name, [{"role": "user", "content": prompt}], max_tokens=50000
+        response = call_llm(
+            provider,
+            model_name,
+            [{"role": "user", "content": prompt}],
+            label="compose",
+            max_tokens=COMPOSE_MAX_TOKENS,
         )
         last_usage = response.usage
         raw_text = response.content or ""
+        finish_reason = getattr(response, "finish_reason", None)
+        (attempts_dir / f"attempt_{i}.response.txt").write_text(
+            raw_text, encoding="utf-8"
+        )
 
-        # Extract code
-        extracted = extract_single_python_file(raw_text)
+        # A length-limited response is incomplete even if it happens to contain
+        # a syntactically valid fenced block. Retry instead of compiling it.
+        if finish_reason == "length":
+            verify_info = {
+                "verify_passed": False,
+                "verify_reason": "LLM response was truncated at the token limit",
+                "finish_reason": finish_reason,
+            }
+            continue
+
+        try:
+            extracted = extract_single_python_file(raw_text)
+        except ValueError as exc:
+            verify_info = {
+                "verify_passed": False,
+                "verify_reason": f"invalid LLM code response: {exc}",
+                "finish_reason": finish_reason,
+            }
+            continue
         code = extracted.code
         # Auto-patch trivial Triton pitfalls before running
         code, changed = _auto_patch_common_triton_issues(code, platform)
         (attempts_dir / f"attempt_{i}.py").write_text(code, encoding="utf-8")
         last_code = code
+
+        # Validate the unified kernel_function signature contract
+        # (kernel_function(*inputs, model=None)) regardless of self-test result.
+        contract_error = _validate_kernel_function_contract(code)
+        # A composed file that still embeds torch.nn code passes the in-file
+        # self-test but is rejected by the optimizer, so gate on it here too.
+        policy_error = _detect_disallowed_torch_usage(code)
+        violations = [
+            (label, message)
+            for label, message in (
+                ("signature contract violation", contract_error),
+                ("disallowed torch usage", policy_error),
+            )
+            if message
+        ]
 
         # Verify each attempt if requested
         if verify:
@@ -426,6 +566,7 @@ def compose(
                 timeout_s=2400,
                 isolated=False,
                 deny_network=False,
+                problem_path=problem_path,
             )
             verify_info = {
                 "verify_rc": rr.rc,
@@ -435,7 +576,21 @@ def compose(
                 "stdout_path": str(rr.stdout_path),
                 "stderr_path": str(rr.stderr_path),
             }
-            if rr.passed:
+            if violations:
+                # These override even a passing self-test, so the next
+                # refinement round sees them through stderr_tail.
+                reason = "; ".join(
+                    f"{label}: {message}" for label, message in violations
+                )
+                verify_info["verify_passed"] = False
+                verify_info["verify_reason"] = reason
+                verify_info["violations"] = [m for _, m in violations]
+                if contract_error:
+                    verify_info["contract_violation"] = contract_error
+                violation_stderr = out_dir / "policy_violation.txt"
+                violation_stderr.write_text(reason, encoding="utf-8")
+                verify_info["stderr_path"] = str(violation_stderr)
+            if rr.passed and not violations:
                 break
         else:
             # If not verifying, stop after first attempt
@@ -446,7 +601,7 @@ def compose(
     composed_path.write_text(last_code or "", encoding="utf-8")
 
     result: dict[str, Any] = {
-        "success": bool(verify_info.get("verify_passed", not verify)),
+        "success": bool(last_code) and bool(verify_info.get("verify_passed", not verify)),
         "composed_path": str(composed_path.resolve()),
         "model": model_name,
         "usage": last_usage,

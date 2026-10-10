@@ -29,10 +29,20 @@ class LLMResponse:
     provider: str
     usage: dict[str, Any] | None = None
     response_id: str | None = None
+    finish_reason: str | None = None
+    # DeepSeek-style gateways expose the model's thinking trace separately
+    # from the answer; keep it so an empty ``content`` can be told apart
+    # from a genuinely empty reply.
+    reasoning_content: str | None = None
 
 
 class BaseProvider(ABC):
     """Base class for all LLM providers."""
+
+    # Provider-specific request keys this provider understands. Declaring them
+    # lets callers pass a key unconditionally; utils.providers.llm_call drops it
+    # for providers that would not understand it.
+    supports_enable_thinking = False
 
     def __init__(self):
         self.client = None

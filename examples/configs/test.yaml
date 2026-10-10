@@ -1,0 +1,22 @@
+# Minimal real-GPU smoke configuration for the current server.
+# Hardware allocation: one NVIDIA A100 SXM4 40GB, exposed as a 2g.10gb MIG slice.
+# The specs database describes the physical GPU; concurrency is restricted below
+# to respect the 10 GiB MIG allocation.
+
+strategy: greedy
+num_workers: 2
+strategy_config:
+  max_no_improvement: 5
+
+openai_model: deepseek-v4-pro
+high_reasoning_effort: true
+
+# Shorter measurements for an initial end-to-end test.
+benchmark_warmup: 10
+benchmark_repeat: 30
+
+# Revert when a candidate is more than 50% slower than the best known kernel.
+divergence_threshold: 50.0
+
+target_platform: cuda
+gpu_name: "NVIDIA A100 SXM4 40GB"

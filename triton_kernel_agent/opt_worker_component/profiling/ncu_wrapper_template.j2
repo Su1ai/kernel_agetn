@@ -111,6 +111,9 @@ try:
 except Exception:
     pass
 
+# Unified contract: kernel_function(*inputs, model=None)
+_has_model_param = 'model' in (inspect.signature(kernel_function).parameters or {})
+
 # Layer type tuples for isinstance checks
 _CONV_TYPES = (
     torch.nn.Conv1d, torch.nn.Conv2d, torch.nn.Conv3d,
@@ -132,7 +135,7 @@ _POOL_TYPES = (
 model_params = {}
 _all_weights = []  # ordered list of all conv/linear weights for *args kernels
 
-if needs_model and has_model and init_inputs:
+if (needs_model or _has_model_param) and has_model and init_inputs:
     try:
         model = Model(*init_inputs) if init_inputs else Model()
     except TypeError:
@@ -191,6 +194,8 @@ if needs_model and has_model and init_inputs:
 def run_kernel():
     """Helper to run the kernel with appropriate arguments."""
     {% if model_extraction %}
+    if _has_model_param:
+        return kernel_function(*cuda_inputs, model=model)
     if needs_model and model_params:
         if has_var_positional and _all_weights:
             # *args kernel: pass (inputs + weights) positionally, config as kwargs

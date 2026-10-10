@@ -50,10 +50,10 @@ class Model(nn.Module):
         return x / rms
 
 
-batch_size = 112
+batch_size = 8
 features = 64
-dim1 = 512
-dim2 = 512
+dim1 = 256
+dim2 = 256
 
 
 def get_inputs():

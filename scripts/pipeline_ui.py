@@ -29,6 +29,7 @@ from pathlib import Path
 import gradio as gr
 from dotenv import load_dotenv
 from triton_kernel_agent.platform_config import get_platform_choices
+from utils.llm_budget import UI_MAX_TOKENS
 
 # Ensure project root is importable when run as a script.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -135,7 +136,7 @@ def _maybe_synthesize_problem(desc: str, model_name: str) -> Path:
         "Return only the single Python file in a code fence."
     )
     resp = provider.get_response(
-        model_name, [{"role": "user", "content": prompt}], max_tokens=6000
+        model_name, [{"role": "user", "content": prompt}], max_tokens=UI_MAX_TOKENS
     )
     code = extract_single_python_file(resp.content or "").code
     return _write_temp_problem(code)

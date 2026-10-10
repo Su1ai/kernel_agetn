@@ -20,6 +20,8 @@ import re
 from logging import Logger
 from pathlib import Path
 
+from utils.providers.llm_call import call_llm
+
 # ------------------------
 # Test-code helpers
 # ------------------------
@@ -55,9 +57,13 @@ def _call_llm(
     logger: Logger | None = None,
     **kwargs,
 ) -> str:
-    """Call an LLM provider and return the response text."""
-    response = provider.get_response(model, messages, **kwargs)
-    return response.content
+    """Call an LLM provider and return the response text.
+
+    Diagnostics so we can tell an empty response from a parse failure live in
+    :func:`utils.providers.llm_call.call_llm`, which all call sites share.
+    """
+    response = call_llm(provider, model, messages, log=logger, **kwargs)
+    return response.content or ""
 
 
 def _extract_history_usage_from_response(

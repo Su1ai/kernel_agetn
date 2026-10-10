@@ -33,6 +33,7 @@ Example:
     ... )
 """
 
+import inspect
 import logging
 import multiprocessing as mp
 import tempfile
@@ -167,6 +168,18 @@ class OptimizationManager:
 
         # Setup logging
         self.logger = self._setup_logging()
+
+        # The Fuser generation stage and this optimizer can share one YAML file,
+        # so generator-only keys (extract_model / dispatch_model / compose_model)
+        # reach us through **worker_kwargs.  Forwarding an unknown key to
+        # OptimizationWorker aborts every worker at construction time, so drop
+        # anything the worker cannot accept and say so.
+        dropped = self._drop_unknown_worker_kwargs(self.worker_kwargs)
+        if dropped:
+            self.logger.warning(
+                "Ignoring config keys not accepted by OptimizationWorker: %s",
+                ", ".join(dropped),
+            )
 
         # Initialize database
         db_path = (
@@ -334,6 +347,46 @@ class OptimizationManager:
     # ------------------------------------------------------------------
     # Logging / strategy helpers (unchanged)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _accepted_worker_parameters() -> set[str] | None:
+        """Parameter names accepted by ``OptimizationWorker.__init__``.
+
+        Only named parameters are reported; ``**kwargs`` is excluded so callers
+        do not treat every key as accepted.  Returns ``None`` when the signature
+        cannot be inspected, in which case callers must not filter.
+        """
+        try:
+            from triton_kernel_agent.opt_worker import OptimizationWorker
+
+            params = inspect.signature(OptimizationWorker.__init__).parameters
+        except Exception:  # pragma: no cover - defensive
+            return None
+        return {
+            name
+            for name, param in params.items()
+            if param.kind
+            not in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+        }
+
+    def _drop_unknown_worker_kwargs(self, kwargs: dict[str, Any]) -> list[str]:
+        """Remove keys ``OptimizationWorker`` does not accept, in place.
+
+        Mutating in place keeps every holder of this dict (the platform
+        worker runner) consistent with the keys added later during setup.
+        Returns the dropped key names, sorted, for logging.
+        """
+        accepted = self._accepted_worker_parameters()
+        if accepted is None:
+            self.logger.warning(
+                "Could not inspect OptimizationWorker signature; forwarding "
+                "worker kwargs unfiltered"
+            )
+            return []
+        dropped = sorted(key for key in kwargs if key not in accepted)
+        for key in dropped:
+            kwargs.pop(key)
+        return dropped
 
     def _setup_logging(self) -> logging.Logger:
         """Setup manager logging."""

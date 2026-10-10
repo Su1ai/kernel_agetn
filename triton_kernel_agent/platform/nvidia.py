@@ -49,9 +49,15 @@ from triton_kernel_agent.platform.interfaces import (
 class NvidiaVerifier(KernelVerifier):
     """Verifies kernel correctness using ``VerificationWorker`` on CUDA."""
 
-    def __init__(self, log_dir: Path, logger: logging.Logger) -> None:
+    def __init__(
+        self,
+        log_dir: Path,
+        logger: logging.Logger,
+        openai_model: str = "gpt-5",
+    ) -> None:
         self.log_dir = log_dir
         self.logger = logger
+        self.openai_model = openai_model
 
     def verify(
         self,
@@ -70,13 +76,14 @@ class NvidiaVerifier(KernelVerifier):
             worker_id=-1,
             workdir=verify_dir,
             log_dir=verify_dir,
+            openai_model=self.openai_model,
         )
 
         success, _, error = worker.verify_with_refinement(
             kernel_code=kernel_code,
             test_code=test_code,
             problem_description=problem_file.read_text(),
-            max_refine_attempts=0,
+            max_refine_attempts=3,
         )
 
         if not success:
@@ -618,6 +625,28 @@ class NvidiaBottleneckAnalyzer(BottleneckAnalyzerBase):
     ) -> list[Any]:
         return self._get_delegate().analyze(
             kernel_code, ncu_metrics, round_num, roofline_result
+        )
+
+    def analyze_source_only(
+        self,
+        kernel_code: str,
+        problem_code: str,
+        round_num: int = 0,
+        baseline_time_ms: float | None = None,
+        pytorch_baseline_ms: float | None = None,
+    ) -> list[Any]:
+        """Forward the no-NCU fallback to the wrapped analyzer.
+
+        The orchestrator calls this whenever Nsight Compute produced no
+        metrics; without it the whole worker fails with an AttributeError.
+        Signature mirrors :meth:`BottleneckAnalyzer.analyze_source_only`.
+        """
+        return self._get_delegate().analyze_source_only(
+            kernel_code=kernel_code,
+            problem_code=problem_code,
+            round_num=round_num,
+            baseline_time_ms=baseline_time_ms,
+            pytorch_baseline_ms=pytorch_baseline_ms,
         )
 
 

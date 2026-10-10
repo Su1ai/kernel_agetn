@@ -74,6 +74,10 @@ class OpenAICompatibleProvider(BaseProvider):
             usage=response.usage.dict()
             if hasattr(response, "usage") and response.usage
             else None,
+            finish_reason=response.choices[0].finish_reason,
+            reasoning_content=getattr(
+                response.choices[0].message, "reasoning_content", None
+            ),
         )
 
     def get_multiple_responses(
@@ -98,6 +102,8 @@ class OpenAICompatibleProvider(BaseProvider):
                 usage=response.usage.dict()
                 if hasattr(response, "usage") and response.usage
                 else None,
+                finish_reason=choice.finish_reason,
+                reasoning_content=getattr(choice.message, "reasoning_content", None),
             )
             for choice in response.choices
         ]
