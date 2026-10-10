@@ -6,10 +6,10 @@
 strategy: beam_search
 num_workers: 4
 max_rounds: 10
-
 strategy_config:
   num_top_kernels: 2
   num_bottlenecks: 2
+  max_no_improvement: 5   # 超过 5 轮无进步则提前中断
 
 # Fuser generation models (used by --stage generate; CLI flags override these)
 extract_model: deepseek-v4.1-flash

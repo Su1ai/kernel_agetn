@@ -25,10 +25,15 @@ ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_DIR = Path(__file__).resolve().parent
 PROBLEM_PATH = EXAMPLE_DIR / "problem.py"
 TEST_PATH = EXAMPLE_DIR / "test.py"
-CONFIG_PATH = ROOT / "examples/configs/beam_search_04_test.yaml"
+# Generator reads the Fuser-side config; the optimizer keeps using the
+# example-side config below (OPTIMIZER_CONFIG_PATH).
+GENERATOR_CONFIG_PATH = ROOT / "Fuser/config/autoagent_default.yml"
+OPTIMIZER_CONFIG_PATH = ROOT / "examples/configs/beam_search_04_test.yaml"
 FUSE_ROOT = ROOT / ".fuse"
 
-# Generator concurrency is independent of optimizer num_workers in the YAML.
+# Fallback generator concurrency, used only when the config file omits
+# ``workers`` / ``dispatch_jobs``.  The configured values take precedence.
+# Keep these small: the current allocation is a 2g.10gb MIG slice (10 GiB).
 GENERATOR_WORKERS = 1
 DISPATCH_JOBS = 1
 
@@ -71,10 +76,10 @@ def find_latest_successful_run(
     return None
 
 
-def load_config() -> dict:
-    data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+def load_config(config_path: Path = GENERATOR_CONFIG_PATH) -> dict:
+    data = yaml.safe_load(config_path.read_text()) or {}
     if not isinstance(data, dict):
-        raise ValueError(f"config must be a mapping: {CONFIG_PATH}")
+        raise ValueError(f"config must be a mapping: {config_path}")
     return data
 
 
@@ -84,21 +89,24 @@ def load_config() -> dict:
 # inside run_pipeline(); results land in a timestamped .fuse/run_* dir.
 def generate() -> Path:
     config = load_config()
+    # Every generator knob is read from the config file so tuning happens in
+    # one place.  The previously hard-coded defaults are kept as fallbacks for
+    # configs that omit a key.
     result = run_pipeline(
         problem_path=PROBLEM_PATH,
         extract_model=config["extract_model"],
         dispatch_model=config["dispatch_model"],
         compose_model=config["compose_model"],
-        dispatch_jobs=DISPATCH_JOBS,
-        workers=GENERATOR_WORKERS,
-        max_iters=3,
-        llm_timeout_s=1200,
-        run_timeout_s=1200,
+        dispatch_jobs=config.get("dispatch_jobs", DISPATCH_JOBS),
+        workers=config.get("workers", GENERATOR_WORKERS),
+        max_iters=config.get("max_iters", 3),
+        llm_timeout_s=config.get("llm_timeout_s", 1200),
+        run_timeout_s=config.get("run_timeout_s", 1200),
         out_root=FUSE_ROOT,
-        verify=True,
-        compose_max_iters=5,
+        verify=config.get("verify", True),
+        compose_max_iters=config.get("compose_max_iters", 5),
         target_platform=config.get("target_platform", "cuda"),
-        test_timeout_s=1200,
+        test_timeout_s=config.get("test_timeout_s", 1200),
     )
     run_dir = Path(result["run_dir"])
     print(f"Generation completed: {run_dir}")
@@ -121,7 +129,7 @@ def optimize(run_dir: Path | None = None) -> Path:
     opt_run_id = new_run_id().replace("run_", "opt_", 1)
     opt_log_dir = FUSE_ROOT / opt_run_id
     manager = OptimizationManager(
-        config=str(CONFIG_PATH),
+        config=str(OPTIMIZER_CONFIG_PATH),
         log_dir=opt_log_dir,
         database_path=opt_log_dir / "program_db.json",
     )
