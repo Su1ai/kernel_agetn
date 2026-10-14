@@ -44,8 +44,8 @@ from utils.llm_budget import ANALYSIS_MAX_TOKENS
 
 _SOURCE_ONLY_PROMPT = """You are optimizing a Triton GPU kernel.
 
-IMPORTANT: Nsight Compute (NCU) hardware profiling is UNAVAILABLE in this
-environment. You MUST NOT invent, guess, or report any NCU metrics
+IMPORTANT: {profiler_name} hardware profiling is UNAVAILABLE in this
+environment. You MUST NOT invent, guess, or report any hardware-profiler metrics
 (SOL %, memory bandwidth, compute utilization, occupancy, stall reasons,
 cache hit rates, or any other hardware counters). Any such numbers you make
 up are fabrication and will be discarded.
@@ -115,6 +115,7 @@ class BottleneckAnalyzer:
         num_causes: int = 2,
         num_fixes: int = 1,
         enable_debug: bool = True,
+        profiler_name: str = "NVIDIA Nsight Compute (NCU)",
     ):
         """
         Initialize bottleneck analyzer.
@@ -139,6 +140,7 @@ class BottleneckAnalyzer:
         self.num_causes = num_causes
         self.num_fixes = num_fixes
         self.enable_debug = enable_debug
+        self.profiler_name = profiler_name
         self.roofline = RooflineAnalyzer(logger=logger)
 
     def analyze(
@@ -186,6 +188,7 @@ class BottleneckAnalyzer:
             num_bottlenecks=self.num_bottlenecks,
             num_causes=self.num_causes,
             num_fixes=self.num_fixes,
+            profiler_name=self.profiler_name,
         )
 
         response = _call_llm(
@@ -243,6 +246,7 @@ class BottleneckAnalyzer:
         )
 
         prompt = _SOURCE_ONLY_PROMPT.format(
+            profiler_name=self.profiler_name,
             num_bottlenecks=self.num_bottlenecks,
             num_causes=self.num_causes,
             num_fixes=self.num_fixes,

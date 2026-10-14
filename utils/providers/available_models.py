@@ -19,6 +19,7 @@ from utils.providers.openai_provider import OpenAIProvider
 from utils.providers.anthropic_provider import AnthropicProvider
 from utils.providers.relay_provider import RelayProvider
 from utils.providers.deepseek_provider import DeepSeekProvider
+from utils.providers.glm_provider import GlmProvider
 
 
 # Registry of all available models (external/OSS version)
@@ -37,6 +38,32 @@ AVAILABLE_MODELS = [
     name="deepseek-v4.1-flash",
     provider_classes=[DeepSeekProvider],
     description="DeepSeek V4.1 Flash via an OpenAI-compatible endpoint",
+    ),
+    # Official DeepSeek API model names (api.deepseek.com).
+    ModelConfig(
+        name="deepseek-flash",
+        provider_classes=[DeepSeekProvider],
+        description="DeepSeek Flash via the official API",
+    ),
+    ModelConfig(
+        name="deepseek-chat",
+        provider_classes=[DeepSeekProvider],
+        description="DeepSeek Chat (non-reasoning) via the official API",
+    ),
+    ModelConfig(
+        name="deepseek-reasoner",
+        provider_classes=[DeepSeekProvider],
+        description="DeepSeek Reasoner (reasoning) via the official API",
+    ),
+    ModelConfig(
+        name="glm-5.3-flash",
+        provider_classes=[GlmProvider],
+        description="GLM 5.3 Flash on the shared OpenAI-compatible gateway",
+    ),
+    ModelConfig(
+        name="glm-5.3",
+        provider_classes=[GlmProvider],
+        description="GLM 5.3 on the shared OpenAI-compatible gateway",
     ),
     ModelConfig(
         name="o4-mini",

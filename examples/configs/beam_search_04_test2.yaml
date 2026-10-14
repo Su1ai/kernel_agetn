@@ -1,0 +1,51 @@
+# Beam search strategy — diverse multi-model variant for MiniGPT-04 on PPU.
+#
+# Host accelerator: PPU-ZW810E (CUDA-compatible runtime, Asight Compute profiler)
+# LLM gateway:      api-ad-ops-prod-advibe.nioint.com
+#
+# Difference from beam_search_04_test.yaml: the beam expands one parent across
+# TWO bottlenecks and TWO models, so a round explores model-diverse candidates
+# instead of four draws from a single model.
+#
+# Worker budget (must equal num_workers, the manager validates it):
+#   effective parents (min(num_expanding_parents, num_top_kernels))
+#     × num_bottlenecks
+#     × len(models)
+#     × samples_per_prompt
+#   = min(1, 4) × 2 × 2 × 1 = 4
+
+strategy: beam_search
+num_workers: 4
+llm_timeout_s: 600            # cap each LLM request (seconds); slow calls get cancelled
+max_rounds: 10
+strategy_config:
+  num_top_kernels: 4            # beam width: keep 4 survivors for dedup headroom
+  num_expanding_parents: 2      # expand only the leader each round
+  num_bottlenecks: 2
+  samples_per_prompt: 1
+  models:                       # one candidate per (bottleneck, model)
+    - deepseek-v4.1-flash
+  max_no_improvement: 5         # stop early after 3 rounds without progress
+
+# Fuser generation models (used by --stage generate; CLI flags override these)
+
+openai_model: deepseek-v4.1-flash   # default LLM / manager-level components
+
+high_reasoning_effort: true     #  gpt可用
+allow_source_only_fallback: true
+
+benchmark_warmup: 10
+benchmark_repeat: 50
+divergence_threshold: 50.0
+target_platform: ppu
+gpu_name: "PPU-ZW810E"
+
+platform:
+  verifier: ppu
+  benchmarker: ppu
+  worker_runner: ppu
+  specs_provider: ppu
+  profiler: ppu
+  roofline_analyzer: ppu
+  bottleneck_analyzer: ppu
+  rag_prescriber: ppu

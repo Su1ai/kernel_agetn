@@ -98,7 +98,7 @@ class OptimizationWorker:
         # Shared history from beam search manager
         prior_history: list[dict] | None = None,
         prior_reflexions: list[dict] | None = None,
-        use_rag: bool = False,
+        use_rag: bool = True,
         # Platform components resolved by the manager registry ─────
         platform_components: dict[str, Any] | None = None,
         # Registry-driven platform config (string names) ───────────

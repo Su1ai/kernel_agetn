@@ -17,18 +17,25 @@ limitations under the License.
 TASK: Optimize the following Triton kernel based on hardware profiling analysis to achieve better performance.
 
 {% if gpu_specs %}
-## TARGET GPU
-- GPU: {{ gpu_specs.name }}
+## TARGET ACCELERATOR
+- Device: {{ gpu_specs.name }}
+{% if gpu_specs.vendor %}- Vendor: {{ gpu_specs.vendor }}{% endif %}
+{% if gpu_specs.runtime_backend %}- Runtime Backend: {{ gpu_specs.runtime_backend }}{% endif %}
+{% if gpu_specs.profiler %}- Profiler: {{ gpu_specs.profiler }}{% endif %}
 - Architecture: {{ gpu_specs.architecture }}
-- Peak Memory Bandwidth: {{ gpu_specs.peak_memory_bw_gbps }} GB/s
-- Peak FP32: {{ gpu_specs.peak_fp32_tflops }} TFLOPS
-- Peak FP16: {{ gpu_specs.peak_fp16_tflops }} TFLOPS
-- Peak BF16: {{ gpu_specs.peak_bf16_tflops }} TFLOPS
-- SM Count: {{ gpu_specs.sm_count }}
-- Max Threads per SM: {{ gpu_specs.max_threads_per_sm }}
-- L1 Cache per SM: {{ gpu_specs.l1_cache_kb }} KB
-- L2 Cache: {{ gpu_specs.l2_cache_mb }} MB
-- Memory: {{ gpu_specs.memory_gb }} GB {{ gpu_specs.memory_type }}
+{% if gpu_specs.peak_memory_bw_gbps is not none %}- Peak Memory Bandwidth: {{ gpu_specs.peak_memory_bw_gbps }} GB/s{% endif %}
+{% if gpu_specs.peak_fp32_tflops is not none %}- Peak FP32: {{ gpu_specs.peak_fp32_tflops }} TFLOPS{% endif %}
+{% if gpu_specs.peak_fp16_tflops is not none %}- Peak FP16: {{ gpu_specs.peak_fp16_tflops }} TFLOPS{% endif %}
+{% if gpu_specs.peak_bf16_tflops is not none %}- Peak BF16: {{ gpu_specs.peak_bf16_tflops }} TFLOPS{% endif %}
+{% if gpu_specs.sm_count is not none %}- SM Count: {{ gpu_specs.sm_count }}{% endif %}
+{% if gpu_specs.max_threads_per_sm is not none %}- Max Threads per SM: {{ gpu_specs.max_threads_per_sm }}{% endif %}
+{% if gpu_specs.l1_cache_kb is not none %}- L1 Cache per SM: {{ gpu_specs.l1_cache_kb }} KB{% endif %}
+{% if gpu_specs.l2_cache_mb is not none %}- L2 Cache: {{ gpu_specs.l2_cache_mb }} MB{% endif %}
+{% if gpu_specs.memory_gb is not none %}- Memory: {{ gpu_specs.memory_gb }} GB {{ gpu_specs.memory_type }}{% endif %}
+{% if gpu_specs.capabilities %}
+- Verified/declared capabilities: {{ gpu_specs.capabilities }}
+- Treat unknown capabilities as unavailable; never infer NVIDIA-only features from a CUDA-compatible runtime.
+{% endif %}
 {% endif %}
 
 ## PROBLEM DESCRIPTION
@@ -49,7 +56,7 @@ PyTorch Eager baseline: {{ "%.4f"|format(pytorch_baseline_ms) }} ms
 - Memory SOL: {{ "%.1f"|format(roofline.memory_sol_pct) }}%
 - Efficiency: {{ "%.1f"|format(roofline.efficiency_pct) }}% (headroom: {{ "%.1f"|format(roofline.headroom_pct) }}%)
 - At Roofline: {{ "Yes" if roofline.at_roofline else "No" }}
-- Tensor Cores: {{ "Active" if roofline.uses_tensor_cores else "Inactive" }}
+- Matrix acceleration observed: {{ "Yes" if roofline.uses_tensor_cores else "No or unavailable" }}
 {%- if roofline.warnings %}
 - Warnings: {{ roofline.warnings | join("; ") }}
 {%- endif %}

@@ -16,6 +16,20 @@ from pathlib import Path
 import stat
 
 
+# Repository root.  This module lives in ``<root>/Fuser/paths.py``, so the
+# default work root is derived from the file location rather than the process
+# CWD: running from a different directory must not scatter artifacts.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Task inputs live here:  ``<TT_WORK_ROOT>/<task>/{problem.py,test.py}``.
+TT_WORK_ROOT = REPO_ROOT / "tt_work"
+
+# Run outputs live here.  The directory is shared by every task, so run ids
+# carry the task label (see ``config.new_run_id``) to stay identifiable:
+# ``<FUSE_ROOT>/run_<task>_<timestamp>_<short>``.
+FUSE_ROOT = REPO_ROOT / ".fuse"
+
+
 class PathSafetyError(Exception):
     pass
 

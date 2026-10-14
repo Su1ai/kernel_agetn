@@ -106,6 +106,26 @@ def load_problem_interface(
     return Model, get_inputs, get_init_inputs
 
 
+def problem_dtype(problem_file: Path) -> torch.dtype:
+    """Return the activation dtype declared by the problem file.
+
+    The problem file is the single source of truth for precision: the PyTorch
+    reference and the Triton kernel must run at the same dtype or the measured
+    speedup is meaningless.  A missing declaration is an error rather than a
+    silent default -- the old hard-coded default made an fp32 problem look as
+    though it had been compared in bf16.
+    """
+    module = import_module(problem_file, "problem")
+    declared = getattr(module, "dtype", None)
+    if not isinstance(declared, torch.dtype):
+        raise CompilationError(
+            f"{problem_file} must declare a module-level 'dtype' "
+            f"(for example 'dtype = torch.bfloat16') so the reference and the "
+            f"kernel are benchmarked at the same precision; found {declared!r}."
+        )
+    return declared
+
+
 def prepare_inputs(
     get_inputs: Callable,
     device: torch.device | str = "cuda",
@@ -175,8 +195,10 @@ def prepare_pytorch_model(
     if not isinstance(inputs, (tuple, list)):
         inputs = (inputs,)
 
-    # Default to bfloat16 unless explicitly specified or model is a loss function
-    target_dtype = dtype or torch.bfloat16
+    # Precision is owned by the problem file, so the reference and the kernel
+    # are always compared at the same dtype.  An explicit ``dtype`` argument
+    # still wins, but nothing is defaulted silently.
+    target_dtype = dtype if dtype is not None else problem_dtype(problem_file)
     is_loss_function = isinstance(model, torch.nn.modules.loss._Loss)
 
     if has_parameters or not is_loss_function:

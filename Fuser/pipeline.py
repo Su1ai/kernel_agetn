@@ -24,7 +24,7 @@ Usage:
     --compose-model o4-mini \
     --workers 4 --max-iters 5 \
     --llm-timeout-s 1200 --run-timeout-s 1200 \
-    --out-root ./.fuse \
+    --out-root <repo>/.fuse \
     [--verify] [--compose-max-iters 5]
 
 Writes all artifacts into the run directory created by the extractor. The final
@@ -58,6 +58,7 @@ def run_pipeline(
     compose_max_iters: int = 5,
     target_platform: str = "cuda",
     test_timeout_s: int = 30,
+    run_label: str | None = None,
 ) -> dict:
     # Select default KernelAgent model if not provided: prefer GPT-5 for Level 2/3
     if dispatch_model is None:
@@ -87,6 +88,7 @@ def run_pipeline(
         run_timeout_s=run_timeout_s,
         target_platform=target_platform,
         out_root=out_root,                  #新添参数用于保存fuser结果
+        run_label=run_label,
     )
 
     # Step 2: dispatch to KernelAgent

@@ -6,28 +6,39 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
-"""PTX-based kernel fingerprinting for dedup.
+"""Low-level kernel fingerprinting for dedup.
 
-Two Triton kernels that lower to identical (normalized) PTX are doing the
-same work on the GPU — a strong equivalence relation for "is this the same
-kernel?" that is invariant to variable renaming, comments, whitespace, and
-most source-level cosmetic changes.
+Two Triton kernels that lower to identical (normalized) machine-level code are
+doing the same work on the accelerator — a strong equivalence relation for "is
+this the same kernel?" that is invariant to variable renames, comments,
+whitespace, and most source-level cosmetic changes.
+
+The artifact used depends on what the backend leaves in the Triton cache, and
+is therefore chosen by hardware:
+
+- NVIDIA CUDA backends emit ``*.ptx``; that is used when present.
+- The PPU backend never persists PTX (its PTX-shaped intermediate is written to
+  a temp file and immediately re-formatted by ``llvm-irformatter`` before the
+  vendor assembler runs), but it does persist the LLVM IR as ``*.llir``.
+
+So the fingerprint function tries PTX first and falls back to LLVM IR, which
+means the same code works on both without a platform switch.
 
 Usage:
-    fingerprint = ptx_hash_from_cache(Path(triton_cache_dir))
+    fingerprint = kernel_fingerprint_from_cache(Path(triton_cache_dir))
     if fingerprint is None:
-        # PTX capture failed — treat as a singleton for dedup purposes.
+        # No artifact captured — treat as a singleton for dedup purposes.
         ...
 
 Caveats:
-- Raw PTX is not fully canonical; this module applies a normalization pass
-  (strip comments, debug, headers; canonicalize register/label names) before
-  hashing.  Normalization is best-effort: the failure mode is a false
-  negative (two true duplicates hashed differently), which only reduces the
-  dedup rate — it does not cause incorrect merges.
-- A kernel module may define multiple ``@triton.jit`` functions.  This
-  module hashes the sorted concatenation of all normalized PTX strings
-  under the cache dir, so the fingerprint reflects the whole module.
+- Neither artifact is fully canonical; this module normalizes before hashing
+  (strip comments/debug/metadata, canonicalize register / SSA / label names).
+  Normalization is best-effort: the failure mode is a false negative (two true
+  duplicates hashed differently), which only reduces the dedup rate — it does
+  not cause incorrect merges.
+- A kernel module may define multiple ``@triton.jit`` functions.  This module
+  hashes the sorted concatenation of every normalized artifact under the cache
+  dir, so the fingerprint reflects the whole module.
 """
 
 from __future__ import annotations
@@ -128,6 +139,51 @@ def normalize_ptx(ptx: str) -> str:
     return body
 
 
+# --- LLVM IR normalization --------------------------------------------------
+# LLVM IR carries paths (``source_filename``, ``!DIFile``), line numbers
+# (``!dbg``), and metadata nodes that vary between two compiles of identical
+# code.  Strip those and canonicalize SSA names before hashing.
+
+_RE_LLIR_COMMENT_LINE = re.compile(r"^\s*;.*$", re.MULTILINE)
+# Metadata / named-metadata / attribute-group definitions (``!0 = ...``,
+# ``!llvm.ident = ...``, ``attributes #0 = ...``).
+_RE_LLIR_METADATA_LINE = re.compile(r"^\s*!\S*\s*=.*$", re.MULTILINE)
+_RE_LLIR_SOURCE_FILENAME = re.compile(r"^\s*source_filename\s*=.*$", re.MULTILINE)
+# Inline debug-location attachments.
+_RE_LLIR_DBG = re.compile(r",?\s*!dbg\s+!\d+")
+# Any leftover metadata reference.
+_RE_LLIR_META_REF = re.compile(r"!\d+\b")
+# SSA values: numbered (``%0``) or named (``%str``, ``%label``), one namespace.
+_RE_LLIR_SSA = re.compile(r"%(?:\d+|[A-Za-z_.][A-Za-z0-9_.]*)")
+
+
+def normalize_llir(llir: str) -> str:
+    """Return a canonical form of *llir* suitable for hashing.
+
+    Stripped: comments, ``source_filename``, metadata definitions, debug
+    locations, and every remaining metadata reference.
+    Canonicalized: SSA value / label names (renamed to a dense sequence).
+    """
+    text = _RE_LLIR_SOURCE_FILENAME.sub("", llir)
+    text = _RE_LLIR_COMMENT_LINE.sub("", text)
+    text = _RE_LLIR_METADATA_LINE.sub("", text)
+    text = _RE_LLIR_DBG.sub("", text)
+    text = _RE_LLIR_META_REF.sub("", text)
+
+    ssa_map: dict[str, int] = {}
+
+    def _ssa_sub(m: re.Match[str]) -> str:
+        name = m.group(0)
+        if name not in ssa_map:
+            ssa_map[name] = len(ssa_map)
+        return f"%{ssa_map[name]}"
+
+    text = _RE_LLIR_SSA.sub(_ssa_sub, text)
+
+    kept = [line.strip() for line in text.splitlines()]
+    return "\n".join(line for line in kept if line)
+
+
 def _find_ptx_files(cache_dir: Path) -> list[Path]:
     """Return every ``*.ptx`` file under *cache_dir* (recursive)."""
     if not cache_dir.exists():
@@ -135,27 +191,51 @@ def _find_ptx_files(cache_dir: Path) -> list[Path]:
     return sorted(cache_dir.rglob("*.ptx"))
 
 
-def ptx_hash_from_cache(cache_dir: Path) -> str | None:
-    """Compute a stable hash of all PTX files under *cache_dir*.
+def _find_llir_files(cache_dir: Path) -> list[Path]:
+    """Return every ``*.llir`` file under *cache_dir* (recursive)."""
+    if not cache_dir.exists():
+        return []
+    return sorted(cache_dir.rglob("*.llir"))
 
-    Returns ``None`` if no PTX files are present (e.g. compilation failed
-    or the cache dir was not populated).  A ``None`` result tells callers
-    to treat the kernel as a dedup singleton.
 
-    The hash covers the normalized PTX of every compiled Triton function
+def kernel_fingerprint_from_cache(cache_dir: Path) -> str | None:
+    """Fingerprint the compiled artifacts under *cache_dir*.
+
+    The artifact is selected by what the backend persisted, so the same call
+    works on every platform:
+
+    - ``*.ptx`` when present (NVIDIA CUDA backends).
+    - otherwise ``*.llir`` (LLVM IR — the deepest artifact the PPU backend
+      keeps; its PTX-shaped intermediate is a temp file that never lands here).
+
+    Returns ``None`` when neither is present (compilation failed or the cache
+    dir was never populated).  A ``None`` result tells callers to treat the
+    kernel as a dedup singleton.
+
+    The hash covers the normalized artifact of every compiled Triton function
     in the module, sorted by relative path for determinism across runs.
     """
     ptx_files = _find_ptx_files(cache_dir)
-    if not ptx_files:
-        return None
+    if ptx_files:
+        artifacts: list[tuple[str, Path]] = [
+            (p.relative_to(cache_dir).as_posix(), p) for p in ptx_files
+        ]
+        normalize = normalize_ptx
+    else:
+        llir_files = _find_llir_files(cache_dir)
+        if not llir_files:
+            return None
+        artifacts = [
+            (p.relative_to(cache_dir).as_posix(), p) for p in llir_files
+        ]
+        normalize = normalize_llir
 
     hasher = hashlib.sha256()
     # Sort by relative path so the fingerprint is stable regardless of
     # filesystem iteration order.
-    rel_sorted = sorted((p.relative_to(cache_dir).as_posix(), p) for p in ptx_files)
-    for rel, path in rel_sorted:
+    for rel, path in sorted(artifacts):
         try:
-            normalized = normalize_ptx(path.read_text(errors="replace"))
+            normalized = normalize(path.read_text(errors="replace"))
         except OSError:
             continue
         # Include the relative filename in the hash so two kernels with the
@@ -169,3 +249,8 @@ def ptx_hash_from_cache(cache_dir: Path) -> str | None:
         hasher.update(b"\0")
 
     return hasher.hexdigest()
+
+
+# Backwards-compatible alias: callers used the PTX-specific name before the
+# fingerprint source became hardware-dependent.
+ptx_hash_from_cache = kernel_fingerprint_from_cache

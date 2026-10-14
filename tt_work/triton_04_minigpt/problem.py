@@ -71,21 +71,25 @@ class Model(nn.Module):
         return x
 
 
-# Dimensions tuned to ~1 GB of parameters (float32).
-# Params ~ 12 * n_embd^2; n_embd=4608 -> 254.86M params ~ 0.95 GB weights,
-# peak forward memory ~0.98 GB on the A100 (10 GB MIG slice).
+# Dimensions and dtype retuned for the PPU accelerator.
+# The original 4096-wide fp32 block exceeded the PPA fp32 matmul throughput and
+# saturated attention softmax, so the block is narrowed and run in bf16.
 # Original KernelBench level3/44 uses: batch=128, seq=512, n_embd=768, n_head=8.
 batch_size = 1
 max_seqlen = 64
 seq_len = 64
-n_embd = 4096
-n_head = 16
+n_embd = 1024
+n_head = 8
 attn_pdrop = 0.0
 resid_pdrop = 0.0
 
+# Single source of truth for the activation dtype. test.py mirrors this so the
+# reference and the Triton kernel are compared at equal precision.
+dtype = torch.bfloat16
+
 
 def get_inputs():
-    return [torch.rand(batch_size, seq_len, n_embd)]
+    return [torch.rand(batch_size, seq_len, n_embd, dtype=dtype)]
 
 
 def get_init_inputs():

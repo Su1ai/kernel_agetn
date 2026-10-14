@@ -22,12 +22,18 @@ from pathlib import Path
 
 from .constants import ExitCode
 from .config import OrchestratorConfig, new_run_id
-from .paths import ensure_abs_regular_file, make_run_dirs, PathSafetyError
+from .paths import (
+    FUSE_ROOT,
+    PathSafetyError,
+    ensure_abs_regular_file,
+    make_run_dirs,
+)
 from .logging_utils import setup_file_logger
 from .orchestrator import Orchestrator
 from triton_kernel_agent.platform_config import get_platform_choices
 
-FUSE_BASE_DIR = Path.cwd() / ".fuse"
+# Task artifacts are unified under <repo>/tt_work (see Fuser.paths).
+FUSE_BASE_DIR = FUSE_ROOT
 
 
 def _load_dotenv_if_present() -> None:

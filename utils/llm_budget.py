@@ -19,9 +19,10 @@ trace against the same output budget as the answer.  A budget that is too small
 therefore returns an *empty* response with ``finish_reason=length`` rather than a
 truncated one, which is easy to mistake for a parse failure downstream.
 
-The gateway used by this project ignores ``enable_thinking`` and
-``reasoning_effort`` (verified against the live API), so the output budget is the
-only lever that actually controls how much room the answer gets.  Keep the values
+The shared gateway offers no reliable switch for the thinking trace -- it
+ignores ``enable_thinking`` and its handling of ``reasoning_effort`` is
+model-dependent -- so the output budget is the one lever that always holds: it guarantees
+room for the answer after the thinking trace takes its share.  Keep the values
 here and override them per deployment through the environment instead of editing
 each call site.
 """
@@ -29,6 +30,20 @@ each call site.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+# These budgets are module-level constants, so they are evaluated the moment
+# this module is imported.  Entry points load ``.env`` inside ``main()``, which
+# runs *after* the pipeline modules (and therefore this one) have been
+# imported, so without this the environment overrides would silently fall back
+# to the defaults below.  Load the project file first; ``override=False`` keeps
+# a real environment variable authoritative over the file.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
+except Exception:  # python-dotenv absent, or no .env in this deployment
+    pass
 
 
 def _env_int(name: str, default: int) -> int:

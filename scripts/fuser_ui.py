@@ -39,7 +39,12 @@ except Exception:  # pragma: no cover
 
 from Fuser.config import OrchestratorConfig, new_run_id
 from Fuser.orchestrator import Orchestrator
-from Fuser.paths import ensure_abs_regular_file, make_run_dirs, PathSafetyError
+from Fuser.paths import (
+    FUSE_ROOT,
+    PathSafetyError,
+    ensure_abs_regular_file,
+    make_run_dirs,
+)
 from triton_kernel_agent.platform_config import get_platform_choices, get_platform
 from utils.providers import (
     BaseProvider,
@@ -247,7 +252,7 @@ def run_fuser_problem(
         )
 
         run_id = new_run_id()
-        base_dir = Path.cwd() / ".fuse"
+        base_dir = FUSE_ROOT
         base_dir.mkdir(exist_ok=True)
         dirs = make_run_dirs(base_dir, run_id)
 

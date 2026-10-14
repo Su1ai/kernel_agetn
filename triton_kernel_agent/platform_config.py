@@ -76,6 +76,26 @@ _XPU_CUDA_HACKS = (
     "XPUDriver.is_available = classmethod(lambda cls: False)",
 )
 
+
+_PPU_GUIDANCE = """\
+**CRITICAL PLATFORM REQUIREMENTS FOR PPU:**
+- PPU uses a CUDA-compatible PyTorch/Triton runtime; keep device='cuda' and torch.cuda synchronization calls.
+- CUDA compatibility does NOT mean the device is an NVIDIA GPU or an A100.
+- Do not use NVIDIA-only APIs such as tl.extra.cuda experimental TMA helpers.
+- Do not assume Hopper/Blackwell TMA, warp specialization, NVIDIA FP8 formats, SM limits, or Tensor Core behavior.
+- Use only portable Triton operations unless a capability is explicitly reported as supported."""
+
+_PPU_KERNEL_GUIDANCE = """\
+## PPU-Specific Generation Constraints
+
+The target is a PPU accelerator exposed through a CUDA-compatible runtime.
+Generate portable Triton code using tl.load, tl.store, tl.dot, reductions, masking,
+and ordinary num_warps/num_stages tuning. Do not infer NVIDIA hardware features
+from the CUDA-compatible device string or reported compatibility capability.
+Avoid NVIDIA Hopper/Blackwell-only TMA, warp-specialization, tl.extra.cuda, and
+NVIDIA-specific FP8 techniques unless the supplied capability profile explicitly
+enables them."""
+
 # Platform registry
 PLATFORMS: dict[str, PlatformConfig] = {
     "cuda": PlatformConfig(
@@ -91,6 +111,13 @@ PLATFORMS: dict[str, PlatformConfig] = {
         guidance_block=_XPU_GUIDANCE,
         kernel_guidance=_XPU_KERNEL_GUIDANCE,
         cuda_hacks_to_strip=_XPU_CUDA_HACKS,
+    ),
+    "ppu": PlatformConfig(
+        name="ppu",
+        device_string="cuda",
+        guidance_block=_PPU_GUIDANCE,
+        kernel_guidance=_PPU_KERNEL_GUIDANCE,
+        cuda_hacks_to_strip=(),
     ),
 }
 

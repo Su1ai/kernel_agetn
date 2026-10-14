@@ -43,7 +43,13 @@ from typing import Any
 from .cli import _load_dotenv_if_present  # reuse env loader
 from .config import OrchestratorConfig, new_run_id
 from .orchestrator import Orchestrator
-from .paths import ensure_abs_regular_file, make_run_dirs, PathSafetyError
+from .paths import (
+    FUSE_ROOT,
+    TT_WORK_ROOT,
+    PathSafetyError,
+    ensure_abs_regular_file,
+    make_run_dirs,
+)
 from .event_adapter import EventAdapter
 from triton_kernel_agent.platform_config import get_platform_choices
 
@@ -217,6 +223,7 @@ def extract_subgraphs_to_json(
     run_timeout_s: int,
     target_platform: str = "cuda",
     out_root: Path | None = None,
+    run_label: str | None = None,
 ) -> tuple[Path, Path]:
     """Run Fuser to produce fused code, then use LLM to emit subgraphs JSON.
 
@@ -237,10 +244,11 @@ def extract_subgraphs_to_json(
         enable_reasoning_extras=True,
         target_platform=target_platform,
     )
-    run_id = new_run_id()
+    run_id = new_run_id(run_label)
     # Respect an explicit out_root (used by pipeline/run_pipeline); keep the
-    # legacy cwd-based ".fuse" when the caller does not specify one.
-    base_dir = out_root if out_root is not None else Path.cwd() / ".fuse"         
+    # Callers normally pass the output root; fall back to the repo-anchored
+    # .fuse rather than a CWD-relative one.
+    base_dir = out_root if out_root is not None else FUSE_ROOT         
     base_dir.mkdir(exist_ok=True)
     dirs = make_run_dirs(base_dir, run_id)
 

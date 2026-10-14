@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from Fuser.subgraph_extractor import extract_subgraphs_to_json
 from triton_kernel_agent.platform_config import get_platform
 from triton_kernel_agent.prompt_manager import PromptManager
+from utils.providers.credentials import api_key_env_name
 from utils.providers import get_model_provider
 from utils.llm_budget import EXTRACT_MAX_TOKENS
 
@@ -50,8 +51,9 @@ PROBLEMS = (                                       #找到KernelBench中的mingp
 
 
 def _required_key(model: str) -> str:
-    if model.startswith("deepseek"):
-        return "DEEPSEEK_API_KEY"
+    # The shared gateway serves the deepseek and glm families with one key.
+    if model.startswith(("deepseek", "glm")):
+        return api_key_env_name()
     if model.startswith("claude"):
         return "ANTHROPIC_API_KEY"
     return "OPENAI_API_KEY"         #否则默认openai key

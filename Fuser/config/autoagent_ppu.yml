@@ -1,0 +1,37 @@
+# PPU-ZW810E configuration for AutoKernelRouter.
+# Pass via: python -m Fuser.auto_agent --problem <path> --config Fuser/config/autoagent_ppu.yml
+
+# KernelAgent settings
+ka_model: deepseek-v4.1-flash  # set explicitly so every stage uses the same model
+ka_num_workers: 4
+ka_max_rounds: 10
+ka_high_reasoning: true
+
+# Router LLM settings
+router_model: deepseek-v4.1-flash
+router_high_reasoning: true
+router_temperature: 0.2
+router_max_tokens: 700
+
+# Fuser pipeline models
+extract_model: deepseek-v4.1-flash
+dispatch_model: deepseek-v4.1-flash
+compose_model: deepseek-v4.1-flash
+
+# Pipeline settings
+workers: 1
+max_iters: 5
+llm_timeout_s: 600
+run_timeout_s: 1200
+compose_max_iters: 5
+verify: true
+dispatch_jobs: 2
+
+# Routing behavior
+allow_fallback: true
+target_platform: ppu
+ignore_router_config: false
+use_router_cache: true
+no_cusolver: false
+test_timeout_s: 30
+test_code: null

@@ -19,23 +19,6 @@ from .base import BaseProvider, LLMResponse
 
 logger = logging.getLogger(__name__)
 
-# Provider-specific request keys. Callers may always pass these; the helper drops
-# any the target provider does not declare support for, because forwarding an
-# unknown field to a gateway that validates its payload fails the whole request.
-_OPTIONAL_REQUEST_KEYS = ("enable_thinking",)
-
-
-def _filter_request_kwargs(
-    provider: BaseProvider, kwargs: dict[str, Any]
-) -> dict[str, Any]:
-    """Return a copy of ``kwargs`` with unsupported provider keys removed."""
-    filtered = dict(kwargs)
-    for key in _OPTIONAL_REQUEST_KEYS:
-        if key in filtered and not getattr(provider, f"supports_{key}", False):
-            filtered.pop(key)
-    return filtered
-
-
 def _describe(response: LLMResponse) -> tuple[str, int, int, Any, Any]:
     """Return (content, content_len, reasoning_len, completion, reasoning)."""
     content = response.content or ""
@@ -73,8 +56,8 @@ def call_llm(
         empty_retries: How many extra attempts to make when the response carries
             no usable text. Zero means "return the empty response as-is".
         retry_kwargs: Request keys merged into the request on retry, e.g.
-            ``{"enable_thinking": False}`` to free the whole budget for the
-            answer. Unsupported keys are dropped.
+            ``{"max_tokens": ...}`` to give the answer more room after a
+            thinking trace consumed the first budget.
         **kwargs: Forwarded to ``provider.get_response``.
 
     Returns:
@@ -82,7 +65,7 @@ def call_llm(
     """
     log = log or logger
     prefix = f"{label}: " if label else ""
-    request_kwargs = _filter_request_kwargs(provider, kwargs)
+    request_kwargs = dict(kwargs)
 
     attempt = 0
     while True:
@@ -119,7 +102,7 @@ def call_llm(
 
         attempt += 1
         if retry_kwargs:
-            request_kwargs.update(_filter_request_kwargs(provider, retry_kwargs))
+            request_kwargs.update(retry_kwargs)
         log.info(
             "%sRetrying LLM call after empty response (attempt %d/%d)",
             prefix,

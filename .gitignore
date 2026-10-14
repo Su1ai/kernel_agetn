@@ -143,3 +143,6 @@ ehthumbs.db
 Thumbs.db
 # Local batch runner
 scripts/run_kernelbench_batch.py
+
+# tt_work holds task INPUTS (problem.py / test.py) and is versioned.
+# Run outputs live under .fuse/ (already ignored above).

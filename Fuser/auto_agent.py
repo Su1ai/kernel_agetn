@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+from Fuser.paths import FUSE_ROOT
 from Fuser.pipeline import run_pipeline
 from utils.config_injectable import config_injectable
 
@@ -97,7 +98,7 @@ _ACT_TOKENS = {"relu", "gelu", "tanh", "sigmoid", "silu", "mish", "leaky_relu"}
 # Router decision cache helpers
 # ------------------------
 
-_ROUTER_CACHE_PATH = Path.cwd() / ".fuse" / "router_cache.json"
+_ROUTER_CACHE_PATH = FUSE_ROOT / "router_cache.json"
 
 
 def _ensure_dir(p: Path) -> None:

@@ -87,7 +87,13 @@ class ResultSummary:
     reason: str
 
 
-def new_run_id() -> str:
+def new_run_id(label: str | None = None) -> str:
+    """Build a run id like ``run_<label>_<timestamp>_<short>``.
+
+    ``label`` names the project the run belongs to, so a shared output root
+    (``.fuse/``) stays readable when several tasks are exercised in turn.
+    """
     ts = time.strftime("%Y%m%d_%H%M%S")
     short = uuid.uuid4().hex[:8]
-    return f"run_{ts}_{short}"
+    prefix = f"run_{label}" if label else "run"
+    return f"{prefix}_{ts}_{short}"

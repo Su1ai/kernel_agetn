@@ -57,6 +57,16 @@ from triton_kernel_agent.platform.nvidia import (
     NvidiaVerifier,
     NvidiaWorkerRunner,
 )
+from triton_kernel_agent.platform.ppu import (
+    PpuAcceleratorSpecsProvider,
+    PpuBenchmarker,
+    PpuBottleneckAnalyzer,
+    PpuKernelProfiler,
+    PpuRAGPrescriber,
+    PpuRooflineAnalyzer,
+    PpuVerifier,
+    PpuWorkerRunner,
+)
 from triton_kernel_agent.platform.noop import (
     NoOpBenchmarker,
     NoOpBottleneckAnalyzer,
@@ -91,6 +101,15 @@ __all__ = [
     "NvidiaRooflineAnalyzer",
     "NvidiaBottleneckAnalyzer",
     "NvidiaRAGPrescriber",
+    # PPU implementations
+    "PpuVerifier",
+    "PpuBenchmarker",
+    "PpuWorkerRunner",
+    "PpuAcceleratorSpecsProvider",
+    "PpuKernelProfiler",
+    "PpuRooflineAnalyzer",
+    "PpuBottleneckAnalyzer",
+    "PpuRAGPrescriber",
     # No-op implementations (manager)
     "NoOpVerifier",
     "NoOpBenchmarker",

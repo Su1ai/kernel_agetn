@@ -19,6 +19,7 @@ from .openai_provider import OpenAIProvider
 from .anthropic_provider import AnthropicProvider
 from .relay_provider import RelayProvider
 from .deepseek_provider import DeepSeekProvider
+from .glm_provider import GlmProvider
 from .models import get_model_provider, get_available_models, is_model_available
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "AnthropicProvider",
     "RelayProvider",
     "DeepSeekProvider",
+    "GlmProvider",
     "get_model_provider",
     "get_available_models",
     "is_model_available",

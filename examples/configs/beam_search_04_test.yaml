@@ -1,28 +1,36 @@
-# Beam search strategy — tuned for MiniGPT-04 on the host GPU.
+# Beam search strategy — tuned for MiniGPT-04 on the PPU host.
 #
-# Host GPU: NVIDIA A100-SXM4-40GB (MIG 2g.10gb slice)
+# Host accelerator: PPU-ZW810E (CUDA-compatible runtime, Asight profiler)
 # LLM:      DeepSeek (OpenAI-compatible gateway)
 
 strategy: beam_search
 num_workers: 4
-max_rounds: 10
+max_rounds: 5
 strategy_config:
   num_top_kernels: 2
   num_bottlenecks: 2
   max_no_improvement: 5   # 超过 5 轮无进步则提前中断
 
 # Fuser generation models (used by --stage generate; CLI flags override these)
-extract_model: deepseek-v4.1-flash
-dispatch_model: deepseek-v4.1-flash
-compose_model: deepseek-v4.1-flash
+
 openai_model: deepseek-v4.1-flash
 
 
 high_reasoning_effort: true      #gpt可用
-allow_source_only_fallback: true
+allow_source_only_fallback: true  #无ncu/acu时开启
 
 benchmark_warmup: 10
 benchmark_repeat: 50
 divergence_threshold: 50.0
-target_platform: cuda
-gpu_name: "NVIDIA A100 SXM4 40GB"
+target_platform: ppu
+gpu_name: "PPU-ZW810E"
+
+platform:
+  verifier: ppu
+  benchmarker: ppu
+  worker_runner: ppu
+  specs_provider: ppu
+  profiler: ppu
+  roofline_analyzer: ppu
+  bottleneck_analyzer: ppu
+  rag_prescriber: ppu

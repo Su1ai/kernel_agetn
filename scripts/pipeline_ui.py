@@ -30,6 +30,7 @@ import gradio as gr
 from dotenv import load_dotenv
 from triton_kernel_agent.platform_config import get_platform_choices
 from utils.llm_budget import UI_MAX_TOKENS
+from Fuser.paths import FUSE_ROOT
 
 # Ensure project root is importable when run as a script.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -87,7 +88,7 @@ class PipelineArtifacts:
 
 
 def _write_temp_problem(code: str) -> Path:
-    base = Path.cwd() / ".fuse" / "custom_problems"
+    base = FUSE_ROOT / "custom_problems"
     base.mkdir(parents=True, exist_ok=True)
     ts = int(time.time() * 1000)
     p = base / f"problem_{ts}.py"

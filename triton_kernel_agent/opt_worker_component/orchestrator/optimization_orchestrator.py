@@ -1069,9 +1069,9 @@ class OptimizationOrchestrator:
                     max_tokens=REFLEXION_MAX_TOKENS,
                     empty_retries=1,
                     # On an empty first response, retry with a larger budget.
-                    # ``enable_thinking`` is deliberately not used here: this
-                    # gateway ignores it (verified against the live API), so
-                    # output budget is the only lever that actually works.
+                    # The thinking trace shares the output budget, and this
+                    # gateway offers no working switch for it, so the budget is
+                    # the only lever that actually helps.
                     retry_kwargs={"max_tokens": REFLEXION_MAX_TOKENS * 2},
                 )
                 response_text = response.content or ""

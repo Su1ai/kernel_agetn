@@ -14,6 +14,7 @@
 
 """Base provider for OpenAI-compatible APIs."""
 
+import os
 from typing import Any
 import logging
 from .base import BaseProvider, LLMResponse
@@ -47,11 +48,25 @@ class OpenAICompatibleProvider(BaseProvider):
             # Configure proxy using centralized utility function
             self._original_proxy_env = configure_proxy_environment()
 
+            # Optional explicit request timeout (seconds). When unset, the client
+            # default applies. LLM_TIMEOUT_S bounds every OpenAI-compatible call
+            # (including the optimizer path), mirroring the relay provider's
+            # LLM_RELAY_TIMEOUT_S convention.
+            client_kwargs: dict[str, Any] = {}
+            _timeout = os.environ.get("LLM_TIMEOUT_S") or os.environ.get("OPENAI_TIMEOUT_S")
+            if _timeout:
+                try:
+                    client_kwargs["timeout"] = float(_timeout)
+                except (TypeError, ValueError):
+                    logging.getLogger(__name__).warning(
+                        "Ignoring invalid LLM_TIMEOUT_S=%r", _timeout
+                    )
+
             # Initialize client (proxy configured via environment variables)
             if self.base_url:
-                self.client = OpenAI(api_key=api_key, base_url=self.base_url)
+                self.client = OpenAI(api_key=api_key, base_url=self.base_url, **client_kwargs)
             else:
-                self.client = OpenAI(api_key=api_key)
+                self.client = OpenAI(api_key=api_key, **client_kwargs)
 
     def get_response(
         self, model_name: str, messages: list[dict[str, str]], **kwargs

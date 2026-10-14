@@ -36,6 +36,7 @@ from timing import (
     import_module,
     load_kernel_function,
     load_problem_interface,
+    problem_dtype,
     prepare_inputs,
 )
 from typing import Any, Callable, Tuple
@@ -449,17 +450,10 @@ def main():
         "bfloat16": torch.bfloat16,
     }[args.dtype]
 
-    # Auto-detect dtype from kernel source (matches NCU wrapper's dtype inference)
-    try:
-        kernel_source = args.kernel.read_text()
-        if "bfloat16" in kernel_source.lower():
-            dtype = torch.bfloat16
-        elif "float16" in kernel_source.lower() or "half" in kernel_source.lower():
-            dtype = torch.float16
-        elif "float32" in kernel_source.lower():
-            dtype = torch.float32
-    except Exception:
-        pass
+    # Precision is owned by the problem file.  The previous keyword sniff on the
+    # kernel source could silently disagree with the reference dtype the
+    # baseline was timed at, which invalidates the comparison.
+    dtype = problem_dtype(args.problem)
 
     if not args.quiet:
         print("=" * 80)

@@ -71,6 +71,24 @@ def _read_all_text_bounded(p: Path, max_bytes: int) -> tuple[str, bool]:
         return "", False
 
 
+def _ppu_injection_enabled() -> bool:
+    """Whether to add PPU SDK variables to the verification child environment.
+
+    PPU compiles kernels in-process at runtime and aborts when its SDK
+    variables are absent. The default keep-list below drops them, so PPU runs
+    need them re-added. Detection stays opt-in so the NVIDIA path keeps its
+    current allow-list semantics untouched.
+    """
+    marker = os.environ.get("KERNELAGENT_PPU_ENV", "auto").strip().lower()
+    if marker in {"0", "false", "off", "no"}:
+        return False
+    if marker in {"1", "true", "on", "yes"}:
+        return True
+    if os.environ.get("PPU_SDK") or os.environ.get("PPU_HOME"):
+        return True
+    return Path("/usr/local/PPU_SDK/CUDA_SDK/bin/ptxas").exists()
+
+
 def _allowlist_env() -> dict[str, str]:
     allow: dict[str, str] = {}
     for k, v in os.environ.items():
@@ -96,6 +114,15 @@ def _allowlist_env() -> dict[str, str]:
     allow.setdefault("OMP_NUM_THREADS", "1")
     allow.setdefault("MKL_NUM_THREADS", "1")
     allow.setdefault("OPENBLAS_NUM_THREADS", "1")
+    if _ppu_injection_enabled():
+        try:
+            from triton_kernel_agent.platform.ppu_runtime import inject_ppu_environment
+
+            inject_ppu_environment(allow)
+        except Exception:
+            # Never let environment augmentation break verification; a PPU
+            # runtime that cannot start will still surface its own error.
+            pass
     return allow
 
 

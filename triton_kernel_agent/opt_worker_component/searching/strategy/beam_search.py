@@ -61,6 +61,7 @@ class BeamSearchStrategy(SearchStrategy):
         models: list[str] | None = None,
         samples_per_prompt: int = 1,
         num_expanding_parents: int | None = None,
+        max_no_improvement: int | None = None,
     ):
         """Initialize beam search strategy.
 
@@ -79,6 +80,9 @@ class BeamSearchStrategy(SearchStrategy):
                 expand from each round.  ``None`` (default) expands from
                 all beam members.  Use a small value (e.g. 1) to focus
                 expansion on the leader while keeping a wider dedup buffer.
+            max_no_improvement: Stop early after this many consecutive rounds
+                without a strictly better best runtime.  ``None`` (default)
+                disables early termination and runs all rounds.
         """
         self.logger = logger or logging.getLogger(self.__class__.__name__)
         self.problem_id: str | None = None
@@ -89,6 +93,9 @@ class BeamSearchStrategy(SearchStrategy):
         self.models = models
         self.samples_per_prompt = max(1, samples_per_prompt)
         self.num_expanding_parents = num_expanding_parents
+        self.max_no_improvement = max_no_improvement
+        self.no_improvement_count = 0
+        self.best_time: float | None = None
         # Internal iteration list: [None] means "use runner default".
         self._expansion_models: list[str | None] = list(models) if models else [None]
 
@@ -118,6 +125,8 @@ class BeamSearchStrategy(SearchStrategy):
         self.problem_id = initial_program.problem_id
         # Start with N copies of initial (will be deduplicated on first update)
         self.top_kernels = [initial_program] * self.num_top_kernels
+        self.best_time = initial_program.metrics.time_ms
+        self.no_improvement_count = 0
         models_str = (
             ", ".join(str(m) for m in self.models) if self.models else "<default>"
         )
@@ -220,6 +229,15 @@ class BeamSearchStrategy(SearchStrategy):
         pooled.sort(key=lambda x: x.metrics.time_ms)
         self.top_kernels = pooled[: self.num_top_kernels]
 
+        # Track stagnation for optional early termination.
+        if self.top_kernels:
+            new_best = self.top_kernels[0].metrics.time_ms
+            if self.best_time is None or new_best < self.best_time - 1e-9:
+                self.best_time = new_best
+                self.no_improvement_count = 0
+            else:
+                self.no_improvement_count += 1
+
         if self.database:
             self.database.save()
 
@@ -236,23 +254,37 @@ class BeamSearchStrategy(SearchStrategy):
 
     @staticmethod
     def _dedup_by_ptx(entries: list[ProgramEntry]) -> list[ProgramEntry]:
-        """Collapse entries with identical PTX fingerprints to the fastest.
+        """Collapse duplicate kernels, keeping the fastest representative.
 
-        Entries whose ``ptx_hash`` is ``None`` are kept as-is (treated as
-        singletons) so we never merge two kernels whose PTX we couldn't
-        capture.
+        The primary key is the compiled fingerprint: identical machine code
+        means identical work on the accelerator.  A missing fingerprint must
+        not make an entry immune to dedup, because the common case is a worker
+        whose LLM did not improve anything and which therefore returns the
+        parent kernel unchanged — those arrive with ``ptx_hash=None`` and, in
+        a wide beam, several workers return the very same source in one round.
+
+        So a missing fingerprint falls back to the kernel *source*, which is a
+        strictly weaker but always-available equivalence: byte-identical source
+        is necessarily the same kernel.  An entry that only has its source also
+        adopts a fingerprint from any entry with matching source, so the two
+        still collapse into one.
         """
-        best_by_hash: dict[str, ProgramEntry] = {}
-        singletons: list[ProgramEntry] = []
+        code_to_hash = {
+            e.kernel_code: e.ptx_hash for e in entries if e.ptx_hash
+        }
+
+        best_by_key: dict[tuple[str, str], ProgramEntry] = {}
         for e in entries:
-            h = e.ptx_hash
-            if h is None:
-                singletons.append(e)
-                continue
-            incumbent = best_by_hash.get(h)
+            fingerprint = e.ptx_hash or code_to_hash.get(e.kernel_code)
+            key = (
+                ("fingerprint", fingerprint)
+                if fingerprint
+                else ("source", e.kernel_code)
+            )
+            incumbent = best_by_key.get(key)
             if incumbent is None or e.metrics.time_ms < incumbent.metrics.time_ms:
-                best_by_hash[h] = e
-        return list(best_by_hash.values()) + singletons
+                best_by_key[key] = e
+        return list(best_by_key.values())
 
     def get_best_program(self) -> ProgramEntry | None:
         """Get the best performing kernel in the beam."""
@@ -261,17 +293,20 @@ class BeamSearchStrategy(SearchStrategy):
         return min(self.top_kernels, key=lambda x: x.metrics.time_ms)
 
     def should_terminate(self, round_num: int, max_rounds: int) -> bool:
-        """Terminate when max rounds reached.
+        """Terminate when max rounds reached or stagnation limit hit.
 
-        Beam search doesn't have early termination - it runs all rounds.
-
-        Args:
-            round_num: Current round number
-            max_rounds: Maximum allowed rounds
-
-        Returns:
-            True if round_num >= max_rounds
+        When ``max_no_improvement`` is set, stop early once the best runtime
+        has not improved for that many consecutive rounds.
         """
+        if (
+            self.max_no_improvement is not None
+            and self.no_improvement_count >= self.max_no_improvement
+        ):
+            self.logger.info(
+                "Beam search early stop: %d rounds without improvement",
+                self.no_improvement_count,
+            )
+            return True
         return round_num >= max_rounds
 
     def handle_worker_failure(self, worker_id: int, error: Exception) -> None:

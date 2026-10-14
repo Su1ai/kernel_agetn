@@ -35,6 +35,7 @@ Example:
 
 import inspect
 import logging
+import os
 import multiprocessing as mp
 import tempfile
 from pathlib import Path
@@ -132,6 +133,7 @@ class OptimizationManager:
         bottleneck_override: str | None = None,
         platform: dict[str, str] | str | None = None,
         gpu_ids: list[int] | None = None,
+        llm_timeout_s: int | None = None,
         **worker_kwargs: Any,
     ):
         """Initialize the optimization manager.
@@ -152,6 +154,13 @@ class OptimizationManager:
                 - a dict like ``{"verifier": "nvidia", ...}`` — per-component
             **worker_kwargs: Additional kwargs passed to OptimizationWorker
         """
+        # Optional per-request LLM timeout (seconds), configured in the optimizer
+        # YAML (e.g. ``llm_timeout_s: 600``). Applied process-wide so every
+        # OpenAI-compatible provider bounds each request (a slow call can no
+        # longer hang a worker indefinitely).
+        if llm_timeout_s:
+            os.environ["LLM_TIMEOUT_S"] = str(llm_timeout_s)
+
         self.max_rounds = max_rounds
         self.log_dir = (
             Path(log_dir) if log_dir else Path(tempfile.mkdtemp(prefix="opt_"))
@@ -433,6 +442,7 @@ class OptimizationManager:
                 models=config.get("models"),
                 samples_per_prompt=config.get("samples_per_prompt", 1),
                 num_expanding_parents=config.get("num_expanding_parents"),
+                max_no_improvement=config.get("max_no_improvement"),
             )
         elif name == "greedy":
             return GreedyStrategy(

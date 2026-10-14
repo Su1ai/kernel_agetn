@@ -30,8 +30,8 @@ Analyze this kernel optimization attempt and generate a self-reflection.
 ## Results
 - Performance: {{ "%.4f"|format(attempt.time_before_ms) }}ms → {{ "%.4f"|format(attempt.time_after_ms) }}ms
 - Improvement: {{ "%+.1f"|format(attempt.improvement_pct) }}%
-- NCU SOL (% of Peak): {{ format_sol_metrics(attempt.combined_sol_pct, attempt.compute_sol_pct, attempt.memory_sol_pct) }}
-{% if attempt.compute_sol_pct is none and attempt.memory_sol_pct is none %}- NOTE: Nsight Compute produced no metrics for this attempt. Absence of metrics is NOT 0% utilization; judge the diagnosis from the measured runtime only and do not cite SOL numbers as evidence.
+- Profiler utilization (% of measured peak): {{ format_sol_metrics(attempt.combined_sol_pct, attempt.compute_sol_pct, attempt.memory_sol_pct) }}
+{% if attempt.compute_sol_pct is none and attempt.memory_sol_pct is none %}- NOTE: The selected hardware profiler produced no metrics for this attempt. Absence of metrics is NOT 0% utilization; judge the diagnosis from the measured runtime only and do not cite SOL numbers as evidence.
 {% endif %}- Passed Verification: {{ "Yes" if attempt.passed_verification else "No" }}
 {% if not attempt.passed_verification and attempt.error_message %}
 - Error: {{ attempt.error_message[:200] }}
@@ -41,7 +41,7 @@ Analyze this kernel optimization attempt and generate a self-reflection.
 Analyze whether the bottleneck diagnosis was correct and whether the applied fix was effective.
 Consider:
 1. Did the performance change align with what was expected from fixing a {{ attempt.bottleneck_category }} bottleneck?
-2. {{ ("Was the runtime change consistent with fixing a " ~ attempt.bottleneck_category ~ " bottleneck? (NCU metrics were unavailable, so reason from the measured runtime and source only.)") if attempt.compute_sol_pct is none and attempt.memory_sol_pct is none else "Did the NCU SOL metrics improve in the expected area?" }}
+2. {{ ("Was the runtime change consistent with fixing a " ~ attempt.bottleneck_category ~ " bottleneck? (hardware-profiler metrics were unavailable, so reason from the measured runtime and source only.)") if attempt.compute_sol_pct is none and attempt.memory_sol_pct is none else "Did the hardware-profiler utilization metrics improve in the expected area?" }}
 3. What can we learn from this attempt for future optimization rounds?
 
 Respond with a JSON object containing the following fields:

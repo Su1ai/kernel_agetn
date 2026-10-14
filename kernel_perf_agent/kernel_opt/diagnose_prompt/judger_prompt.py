@@ -16,7 +16,7 @@
 Bottleneck Analysis Prompt Builder
 
 Provides prompt templates and parsing utilities for LLM-based bottleneck analysis
-of NCU profiling metrics.
+of hardware-profiler metrics.
 
 Bottleneck Categories:
 - memory: Memory bandwidth is the limiting factor
@@ -72,28 +72,28 @@ class BottleneckResult:
 
 
 BOTTLENECK_PROMPT = """\
-You are a GPU performance expert analyzing Triton kernel profiling data.
+You are an accelerator performance expert analyzing Triton kernel profiling data.
 
 ## Task
-Analyze the NCU metrics and identify {num_bottlenecks} performance bottleneck(s). For each, classify as:
+Analyze the {profiler_name} metrics and identify {num_bottlenecks} performance bottleneck(s). For each, classify as:
 - **memory**: Memory bandwidth is the limiting factor
 - **compute**: Compute throughput is the limiting factor
 - **underutilized**: Neither saturated (<60% both), indicating stalls/occupancy issues
 
-## GPU Specifications
+## Target Accelerator Specifications
 {gpu_specs}
 
-## Roofline Analysis
+## Utilization / Roofline Analysis
 - Bottleneck: {roofline_bottleneck}
 - Compute SOL: {compute_sol:.1f}%
 - Memory SOL: {memory_sol:.1f}%
 - Efficiency: {efficiency:.1f}%
 - Headroom: {headroom:.1f}%
 - At Roofline: {at_roofline}
-- Tensor Cores: {uses_tc}
+- Matrix acceleration observed: {uses_tc}
 - Warnings: {roofline_warnings}
 
-## NCU Metrics
+## Hardware Profiler Metrics ({profiler_name})
 {ncu_metrics}
 
 ## Kernel Code
@@ -194,6 +194,7 @@ def build_bottleneck_prompt(
     num_bottlenecks: int = 1,
     num_causes: int = 2,
     num_fixes: int = 1,
+    profiler_name: str = "NVIDIA Nsight Compute (NCU)",
 ) -> str:
     """Build the bottleneck analysis prompt for the LLM.
 
@@ -210,6 +211,7 @@ def build_bottleneck_prompt(
         Formatted prompt string for the LLM.
     """
     return BOTTLENECK_PROMPT.format(
+        profiler_name=profiler_name,
         num_bottlenecks=num_bottlenecks,
         num_causes=num_causes,
         num_fixes=num_fixes,
